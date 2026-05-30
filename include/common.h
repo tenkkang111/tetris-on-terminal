@@ -17,6 +17,7 @@ typedef struct {
 typedef struct {
     BlockType bag[7];
     uint8_t currentIndex;
+    uint32_t currentSeed;
     BlockType nextBag[7];
 } BagSystem;
 

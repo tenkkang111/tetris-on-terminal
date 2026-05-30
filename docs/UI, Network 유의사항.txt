@@ -1,0 +1,14 @@
+Network 관련 유의점
+
+게임 시작 시 난수 시드값을 생성해 공유해야함. (멀티 시 각 플레이어가 같은 7-bag 블럭 배열을 공유)
+
+상대의 공격(Garbage 라인), 상태 동기화는 lockblock 호출 후 적용.
+
+
+
+Ui 관련 유의점
+
+Next 블럭 렌더링 5개를 미리 보여주어야함.
+- state -> bagState 내부의 currentIndex 위치부터 읽고, 남은 개수 만큼 nextBag 배열에서 읽기
+
++ 멀티스레드 시 MUTEX ROCK 관련
