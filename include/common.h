@@ -1,3 +1,6 @@
+#ifndef COMMON_H
+#define COMMON_H
+
 #include <stdint.h>
 #include <stdbool.h>
 
@@ -26,7 +29,11 @@ typedef struct {
     uint8_t board[20][10];   // 20*10 게임 보드
     CurrentBlock activeBlock;// 활성 블럭 정보
     BagSystem bagState;      // 7-Bag 정보
+    BlockType holdBlock;     // 홀드 블럭 정보
+    bool canHold;            // 홀드 가능 여부
     uint32_t score;          // 점수
     uint8_t pendingGarbage;  // 대기 가비지 라인 수(Multi 용도)
     bool isGameOver;         // 게임 종료 여부
 } GameState;
+
+#endif

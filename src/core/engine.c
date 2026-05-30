@@ -60,6 +60,8 @@ void initGame(GameState* state, uint32_t seed)
     state->score          = 0;
     state->pendingGarbage = 0;
     state->isGameOver     = false;
+    state->holdBlock      = EMPTY;
+    state->canHold        = true;
 
     state->bagState.currentSeed = seed;
  
@@ -105,9 +107,42 @@ void spawnBlock(GameState* state){
     state->activeBlock.rotation = 0;
     state->activeBlock.x = (int8_t)SPAWN_X;
     state->activeBlock.y = (int8_t)SPAWN_Y;
+
+    state->canHold = true;
     
     // 스폰 충돌 여부 체크
     if (checkCollision(state, SPAWN_X, SPAWN_Y, 0)) {
         state->isGameOver = true;
     }
+}
+
+/**
+ * @brief 현재 블록을 홀드(보관)하고 새로운 블록을 꺼냄, 또는 홀드된 블록이 있으면 교체
+ */
+void holdCurrentBlock(GameState* state){
+
+    if (!state->canHold) {
+        return;
+    }
+
+    BlockType currentType = state->activeBlock.type;
+
+     if (state->holdBlock == EMPTY) {
+        state->holdBlock = currentType;
+        spawnBlock(state); 
+    } else {
+        BlockType temp = state->holdBlock;
+        state->holdBlock = currentType;
+        
+        state->activeBlock.type = temp;
+        state->activeBlock.rotation = 0;
+        state->activeBlock.x = (int8_t)SPAWN_X;
+        state->activeBlock.y = (int8_t)SPAWN_Y;
+        
+        if (checkCollision(state, SPAWN_X, SPAWN_Y, 0)) {
+            state->isGameOver = true;
+        }
+    }
+
+    state->canHold = false;
 }

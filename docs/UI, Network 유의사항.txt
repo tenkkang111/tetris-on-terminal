@@ -8,7 +8,7 @@ Network 관련 유의점
 
 Ui 관련 유의점
 
-Next 블럭 렌더링 5개를 미리 보여주어야함.
+Next 블럭 렌더링 5개 및 Hold 블럭을 미리 보여주어야함.
 - state -> bagState 내부의 currentIndex 위치부터 읽고, 남은 개수 만큼 nextBag 배열에서 읽기
 
 + 멀티스레드 시 MUTEX ROCK 관련

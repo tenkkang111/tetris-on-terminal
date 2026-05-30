@@ -7,6 +7,7 @@
 void initGame(GameState* state, uint32_t seed);
 void initBag(BagSystem* bagSys);
 void spawnBlock(GameState* state);
+void holdCurrentBlock(GameState* state);
 
 // block.c
 bool moveLeft(GameState* state);
