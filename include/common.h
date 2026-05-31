@@ -9,6 +9,13 @@ typedef enum {
     EMPTY = 0, I, J, L, O, S, T, Z, GARBAGE
 } BlockType;
 
+// T-Spin 분류
+typedef enum {
+    TSPIN_NONE = 0,
+    TSPIN_MINI,
+    TSPIN_FULL
+} TSpinType;
+
 // 현재 블럭 정보
 typedef struct {
     int8_t x, y;
@@ -34,6 +41,12 @@ typedef struct {
     uint32_t score;          // 점수
     uint8_t pendingGarbage;  // 대기 가비지 라인 수(Multi 용도)
     bool isGameOver;         // 게임 종료 여부
+
+    // TETR.IO 룰용 추가 상태
+    bool lastActionRotation; // 마지막 성공 액션이 회전이었는지 (T-spin 판정)
+    uint8_t b2b;             // Back-to-back 카운터
+    uint16_t combo;          // Combo 카운터 (연속 라인 클리어)
+    uint32_t totalLines;     // 전체 클리어 라인 수
 } GameState;
 
 #endif

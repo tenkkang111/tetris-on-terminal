@@ -8,8 +8,10 @@ typedef enum {
     UI_KEY_NONE = 0,
     UI_KEY_LEFT,
     UI_KEY_RIGHT,
-    UI_KEY_DOWN,
-    UI_KEY_ROTATE,
+    UI_KEY_SOFT_DROP,
+    UI_KEY_ROTATE_CW,
+    UI_KEY_ROTATE_CCW,
+    UI_KEY_ROTATE_180,
     UI_KEY_HARD_DROP,
     UI_KEY_HOLD,
     UI_KEY_QUIT

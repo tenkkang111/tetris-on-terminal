@@ -148,33 +148,104 @@ bool checkCollision(GameState* state, int nextX, int nextY, int nextRot)
 }
 
 /**
- * @brief activeBlock을 board 2차원 배열에 고정(블럭 배치)
+ * @brief activeBlock을 board 2차원 배열에 고정 + 라인 클리어.
  *
- * 멀티플레이어/네트워크 환경에서 이 함수가 실행되는 시점이 네트워크 이벤트 전송 타이밍입니다.
+ *   - 점수/스폰/가비지 큐 처리는 호출자(main.c)가 담당.
+ *   - 멀티플레이 시 본 함수 직후가 네트워크 송신 타이밍.
+ *
+ * @return 클리어된 라인 수 (0~4)
  */
-void lockBlock(GameState* state)
+int lockBlock(GameState* state)
 {
     CurrentBlock* b = &state->activeBlock;
     int cells[4][2];
     getPieceCells(b->type, b->rotation, b->x, b->y, cells);
- 
+
     for (int i = 0; i < PIECE_CELLS; i++) {
         int row = cells[i][0];
         int col = cells[i][1];
-            
-            /* 보드 범위 내에만 배치 (천장 위는 무시) */
+
         if (row >= 0 && row < BOARD_ROWS &&
             col >= 0 && col < BOARD_COLS) {
             state->board[row][col] = (uint8_t)b->type;
         }
     }
- 
-    int cleared = checkAndClearLines(state);
 
-    static const uint32_t lineScore[5] = {0, 100, 300, 500, 800};
-    state->score += lineScore[cleared];
+    return checkAndClearLines(state);
+}
 
-    spawnBlock(state);
+/**
+ * @brief T-Spin 판정 (3-corner rule).
+ *        호출 직전 액션이 회전 성공 + activeBlock.type == T 일 때만 의미 있음.
+ *
+ *   - 4개 대각 코너 중 3개 이상 막힘 → T-spin 후보
+ *   - 그 중 'front' 두 코너 모두 막힘 → TSPIN_FULL
+ *   - 아니면 TSPIN_MINI
+ *   - 코너 2개 이하 막힘 → TSPIN_NONE
+ *
+ * T의 중심은 활성 블록 원점 (x,y) 에서 (1,1) 오프셋.
+ */
+TSpinType detectTSpin(const GameState* state)
+{
+    const CurrentBlock* b = &state->activeBlock;
+    if (b->type != T || !state->lastActionRotation) return TSPIN_NONE;
+
+    int cx = b->x + 1;
+    int cy = b->y + 1;
+
+    /* (dr, dc) 4 대각 */
+    const int diag[4][2] = {
+        {-1, -1}, {-1, 1}, {1, -1}, {1, 1}
+    };
+
+    int filled = 0;
+    bool occ[4];
+    for (int i = 0; i < 4; i++) {
+        int r = cy + diag[i][0];
+        int c = cx + diag[i][1];
+        bool isFilled;
+        if (r < 0 || r >= BOARD_ROWS || c < 0 || c >= BOARD_COLS) {
+            isFilled = true;        /* 벽/바닥은 막힘으로 취급 */
+        } else {
+            isFilled = (state->board[r][c] != EMPTY);
+        }
+        occ[i] = isFilled;
+        if (isFilled) filled++;
+    }
+
+    if (filled < 3) return TSPIN_NONE;
+
+    /* rotation별 'front' 두 코너 인덱스 (diag 배열 기준).
+     *   diag[0]=TL, diag[1]=TR, diag[2]=BL, diag[3]=BR
+     *   rot 0 = stem up    → front = TL, TR
+     *   rot 1 = stem right → front = TR, BR
+     *   rot 2 = stem down  → front = BL, BR
+     *   rot 3 = stem left  → front = TL, BL
+     */
+    int frontA, frontB;
+    switch (b->rotation) {
+        case 0: frontA = 0; frontB = 1; break;
+        case 1: frontA = 1; frontB = 3; break;
+        case 2: frontA = 2; frontB = 3; break;
+        case 3: frontA = 0; frontB = 2; break;
+        default: return TSPIN_NONE;
+    }
+
+    if (occ[frontA] && occ[frontB]) return TSPIN_FULL;
+    return TSPIN_MINI;
+}
+
+/**
+ * @brief 보드가 완전히 비어 있는지 (Perfect Clear 판정용).
+ */
+bool isBoardEmpty(const GameState* state)
+{
+    for (int r = 0; r < BOARD_ROWS; r++) {
+        for (int c = 0; c < BOARD_COLS; c++) {
+            if (state->board[r][c] != EMPTY) return false;
+        }
+    }
+    return true;
 }
 
 /**

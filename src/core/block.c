@@ -1,147 +1,133 @@
 #include "core.h"
 
-#define ROTATION_COUNT  4
+#define ROTATION_COUNT 4
 
-/**
- * SRS Wall Kick 오프셋
- *   - JLSTZ 블록용과 I 블록용이 상이
- *   kicksJLSTZ[현재_회전][킥_인덱스] = {dx, dy}
- *
- * dy는 화면 아래 방향이 양수인 좌표 기준
- */
-static const int kicksJLSTZ[4][5][2] = {
-    /* 0 → 1 */ {{ 0, 0}, {-1, 0}, {-1,-1}, { 0, 2}, {-1, 2}},
-    /* 1 → 2 */ {{ 0, 0}, { 1, 0}, { 1, 1}, { 0,-2}, { 1,-2}},
-    /* 2 → 3 */ {{ 0, 0}, { 1, 0}, { 1,-1}, { 0, 2}, { 1, 2}},
-    /* 3 → 0 */ {{ 0, 0}, {-1, 0}, {-1, 1}, { 0,-2}, {-1,-2}},
+/* SRS Wall Kick — JLSTZ (CW) */
+static const int kicksJLSTZ_CW[4][5][2] = {
+    /* 0 -> 1 */ {{ 0, 0}, {-1, 0}, {-1,-1}, { 0, 2}, {-1, 2}},
+    /* 1 -> 2 */ {{ 0, 0}, { 1, 0}, { 1, 1}, { 0,-2}, { 1,-2}},
+    /* 2 -> 3 */ {{ 0, 0}, { 1, 0}, { 1,-1}, { 0, 2}, { 1, 2}},
+    /* 3 -> 0 */ {{ 0, 0}, {-1, 0}, {-1, 1}, { 0,-2}, {-1,-2}},
 };
 
-/**
- * I 블록 전용 Wall Kick 오프셋 테이블
- *
- * kicksI[현재_회전][킥_인덱스] = {dx, dy}
- */
-static const int kicksI[4][5][2] = {
-    /* 0 → 1 */ {{ 0, 0}, {-2, 0}, { 1, 0}, {-2, 1}, { 1,-2}},
-    /* 1 → 2 */ {{ 0, 0}, {-1, 0}, { 2, 0}, {-1,-2}, { 2, 1}},
-    /* 2 → 3 */ {{ 0, 0}, { 2, 0}, {-1, 0}, { 2,-1}, {-1, 2}},
-    /* 3 → 0 */ {{ 0, 0}, { 1, 0}, {-2, 0}, { 1, 2}, {-2,-1}},
+/* SRS Wall Kick — JLSTZ (CCW) */
+static const int kicksJLSTZ_CCW[4][5][2] = {
+    /* 0 -> 3 */ {{ 0, 0}, { 1, 0}, { 1,-1}, { 0, 2}, { 1, 2}},
+    /* 1 -> 0 */ {{ 0, 0}, { 1, 0}, { 1, 1}, { 0,-2}, { 1,-2}},
+    /* 2 -> 1 */ {{ 0, 0}, {-1, 0}, {-1,-1}, { 0, 2}, {-1, 2}},
+    /* 3 -> 2 */ {{ 0, 0}, {-1, 0}, {-1, 1}, { 0,-2}, {-1,-2}},
 };
 
-// 공개 함수 
+/* SRS Wall Kick — I (CW) */
+static const int kicksI_CW[4][5][2] = {
+    /* 0 -> 1 */ {{ 0, 0}, {-2, 0}, { 1, 0}, {-2, 1}, { 1,-2}},
+    /* 1 -> 2 */ {{ 0, 0}, {-1, 0}, { 2, 0}, {-1,-2}, { 2, 1}},
+    /* 2 -> 3 */ {{ 0, 0}, { 2, 0}, {-1, 0}, { 2,-1}, {-1, 2}},
+    /* 3 -> 0 */ {{ 0, 0}, { 1, 0}, {-2, 0}, { 1, 2}, {-2,-1}},
+};
 
-/**
- * @brief 블록을 좌로 1칸 이동 시도
- * 
- * @param state 현재 GameState 포인터
- * @return 이동 성공시 True, 충돌 등 사유로 불가 시 false
- */
-bool moveLeft(GameState* state){
-    CurrentBlock* b  = &state->activeBlock;
-    int           nx = b->x - 1;
+/* SRS Wall Kick — I (CCW) */
+static const int kicksI_CCW[4][5][2] = {
+    /* 0 -> 3 */ {{ 0, 0}, {-1, 0}, { 2, 0}, {-1,-2}, { 2, 1}},
+    /* 1 -> 0 */ {{ 0, 0}, { 2, 0}, {-1, 0}, { 2, 1}, {-1,-2}},
+    /* 2 -> 1 */ {{ 0, 0}, { 1, 0}, {-2, 0}, { 1, 2}, {-2,-1}},
+    /* 3 -> 2 */ {{ 0, 0}, {-2, 0}, { 1, 0}, {-2,-1}, { 1, 2}},
+};
 
-    if (checkCollision(state, nx, b->y, b->rotation)) {
-        return false;
-    }
+/* 180° kick (TETR.IO 단순화 버전: 본 위치 + 좌우 + 위 시도) */
+static const int kicks180[6][2] = {
+    { 0, 0}, { 1, 0}, {-1, 0}, { 0,-1}, { 2, 0}, {-2, 0},
+};
 
-    b->x = (int8_t)nx;
-    return true;
-}
-
-/**
- * @brief 블록을 우로 1칸 이동 시도
- * 
- * @param state 현재 GameState 포인터
- * @return 이동 성공시 True, 충돌 등 사유로 불가 시 false
- */
-bool moveRight(GameState* state){
-    CurrentBlock* b  = &state->activeBlock;
-    int           nx = b->x + 1;
-
-    if (checkCollision(state, nx, b->y, b->rotation)) {
-        return false;
-    }
-
-    b->x = (int8_t)nx;
-    return true;
-}
-
-/**
- * @brief 블록을 아래로 1칸 이동 시도
- * 
- * 충돌 발생시 이동을 취소하고 lockBlock() 호출
- * 
- * @param state 현재 GameState 포인터
- * @return 이동 성공시 True, 충돌 등 사유로 불가 시 false
- */
-bool moveDown(GameState* state){
-    CurrentBlock* b  = &state->activeBlock;
-    int           ny = b->y + 1;
-
-    if (checkCollision(state, b->x, ny, b->rotation)) {
-        lockBlock(state);
-        return false;
-    }
-
-    b->y = (int8_t)ny;
-    return true;
-}
-
-/**
- * @brief 블록을 충돌 직전 위치까지 즉시 낙하
- * 
- * CheckCollision이 True를 반환할 때까지 y 좌표 증가
- * lockblock 호출
- * 
- * @param state 현재 GameState 포인터
- */
-void hardDrop(GameState* state){
+bool moveLeft(GameState* state)
+{
     CurrentBlock* b = &state->activeBlock;
-    int targetY = b->y;
-
-    // 충돌하기 전까지의 최대 Y값을 찾음
-    while (!checkCollision(state, b->x, targetY + 1, b->rotation)) {
-        targetY++;
-    }
-
-    // 한 번에 위치 업데이트 후 블록 고정
-    b->y = (int8_t)targetY;
-    lockBlock(state);
+    if (checkCollision(state, b->x - 1, b->y, b->rotation)) return false;
+    b->x -= 1;
+    state->lastActionRotation = false;
+    return true;
 }
-    
-/**
- * @brief 블록 회전 시도
- * 
- * 0 블럭은 생략
- * 충돌 발생 시 SRS Wall Kick 오프셋 5개를 순차적 시도
- * 모든 시도가 실패 시, 회전 취소 및 false 반환
- * 
- * @param state 현재 GameState 포인터
- * @return 회전 성공시 True, 그 외 false
- */
-bool rotateBlock(GameState* state){
+
+bool moveRight(GameState* state)
+{
     CurrentBlock* b = &state->activeBlock;
-    int           newRotation = (b->rotation + 1) % ROTATION_COUNT;
+    if (checkCollision(state, b->x + 1, b->y, b->rotation)) return false;
+    b->x += 1;
+    state->lastActionRotation = false;
+    return true;
+}
 
-    if (b->type == O) {
-        return true;
+bool moveDown(GameState* state)
+{
+    CurrentBlock* b = &state->activeBlock;
+    if (checkCollision(state, b->x, b->y + 1, b->rotation)) return false;
+    b->y += 1;
+    state->lastActionRotation = false;
+    return true;
+}
+
+void hardDropToBottom(GameState* state)
+{
+    CurrentBlock* b = &state->activeBlock;
+    while (!checkCollision(state, b->x, b->y + 1, b->rotation)) {
+        b->y += 1;
     }
+    state->lastActionRotation = false;
+}
 
-    const int (*kicks)[2] = (b->type == I)
-                            ? kicksI[b->rotation]
-                            : kicksJLSTZ[b->rotation];
+int ghostDropY(const GameState* state)
+{
+    /* checkCollision은 state 비-const이지만 보드 변경은 안 함 — 캐스팅 */
+    GameState* mut = (GameState*)state;
+    const CurrentBlock* b = &state->activeBlock;
+    int y = b->y;
+    while (!checkCollision(mut, b->x, y + 1, b->rotation)) y++;
+    return y;
+}
 
-    for (int i = 0; i < 5; i++) {
+static bool tryRotate(GameState* state, int newRot, const int (*kicks)[2], int kickCount)
+{
+    CurrentBlock* b = &state->activeBlock;
+    for (int i = 0; i < kickCount; i++) {
         int kx = b->x + kicks[i][0];
         int ky = b->y + kicks[i][1];
-
-        if (!checkCollision(state, kx, ky, newRotation)) {
+        if (!checkCollision(state, kx, ky, newRot)) {
             b->x = (int8_t)kx;
             b->y = (int8_t)ky;
-            b->rotation = (uint8_t)newRotation;
+            b->rotation = (uint8_t)newRot;
+            state->lastActionRotation = true;
             return true;
         }
     }
-    
     return false;
+}
+
+bool rotateCW(GameState* state)
+{
+    CurrentBlock* b = &state->activeBlock;
+    if (b->type == O) { state->lastActionRotation = true; return true; }
+    int newRot = (b->rotation + 1) % ROTATION_COUNT;
+    const int (*kicks)[2] = (b->type == I)
+                            ? kicksI_CW[b->rotation]
+                            : kicksJLSTZ_CW[b->rotation];
+    return tryRotate(state, newRot, kicks, 5);
+}
+
+bool rotateCCW(GameState* state)
+{
+    CurrentBlock* b = &state->activeBlock;
+    if (b->type == O) { state->lastActionRotation = true; return true; }
+    int newRot = (b->rotation + 3) % ROTATION_COUNT;
+    const int (*kicks)[2] = (b->type == I)
+                            ? kicksI_CCW[b->rotation]
+                            : kicksJLSTZ_CCW[b->rotation];
+    return tryRotate(state, newRot, kicks, 5);
+}
+
+bool rotate180(GameState* state)
+{
+    CurrentBlock* b = &state->activeBlock;
+    if (b->type == O) { state->lastActionRotation = true; return true; }
+    int newRot = (b->rotation + 2) % ROTATION_COUNT;
+    return tryRotate(state, newRot, kicks180, 6);
 }

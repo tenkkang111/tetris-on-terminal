@@ -56,15 +56,19 @@ static void fillAndShuffleBag(BlockType* bagArray, uint32_t* seed_state) {
 void initGame(GameState* state, uint32_t seed)
 {
     memset(state->board, EMPTY, sizeof(state->board));
- 
-    state->score          = 0;
-    state->pendingGarbage = 0;
-    state->isGameOver     = false;
-    state->holdBlock      = EMPTY;
-    state->canHold        = true;
+
+    state->score              = 0;
+    state->pendingGarbage     = 0;
+    state->isGameOver         = false;
+    state->holdBlock          = EMPTY;
+    state->canHold            = true;
+    state->lastActionRotation = false;
+    state->b2b                = 0;
+    state->combo              = 0;
+    state->totalLines         = 0;
 
     state->bagState.currentSeed = seed;
- 
+
     initBag(&state->bagState);
     spawnBlock(state);
 }
@@ -109,7 +113,8 @@ void spawnBlock(GameState* state){
     state->activeBlock.y = (int8_t)SPAWN_Y;
 
     state->canHold = true;
-    
+    state->lastActionRotation = false;
+
     // 스폰 충돌 여부 체크
     if (checkCollision(state, SPAWN_X, SPAWN_Y, 0)) {
         state->isGameOver = true;
@@ -133,16 +138,17 @@ void holdCurrentBlock(GameState* state){
     } else {
         BlockType temp = state->holdBlock;
         state->holdBlock = currentType;
-        
+
         state->activeBlock.type = temp;
         state->activeBlock.rotation = 0;
         state->activeBlock.x = (int8_t)SPAWN_X;
         state->activeBlock.y = (int8_t)SPAWN_Y;
-        
+
         if (checkCollision(state, SPAWN_X, SPAWN_Y, 0)) {
             state->isGameOver = true;
         }
     }
 
     state->canHold = false;
+    state->lastActionRotation = false;
 }

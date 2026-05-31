@@ -23,6 +23,14 @@ typedef struct {
     /* 상대 활성(낙하 중) 블록. MSG_STATE 수신 시 갱신 */
     CurrentBlock opponentActive;
     bool opponentHasActive;
+
+    /* 상대 풀 상태 (MSG_LOCK / MSG_HOLD 수신 시 갱신) */
+    BlockType opponentHold;
+    uint8_t   opponentPendingGarbage;
+    uint8_t   opponentB2b;
+    uint16_t  opponentCombo;
+    uint32_t  opponentTotalLines;
+    BagSystem opponentBag;   /* currentIndex / bag / nextBag 사용 (seed는 unused) */
 } NetContext;
 
 /**
@@ -43,9 +51,14 @@ int netJoin(NetContext* ctx, const char* host, uint16_t port);
 int netExchangeSeed(NetContext* ctx);
 
 /**
- * @brief lockBlock 직후 호출. 본인 보드/점수 스냅샷 + 상대에게 보낼 garbage 줄 수 송신.
+ * @brief lockBlock 직후 호출. 본인 풀 스냅샷(board/score/hold/b2b/combo/lines/bag) + garbage 송신.
  */
 int netSendLock(NetContext* ctx, const GameState* state, uint8_t garbageToSend);
+
+/**
+ * @brief Hold 액션 후 호출. hold 피스 + bag.currentIndex 즉시 동기화.
+ */
+int netSendHold(NetContext* ctx, const GameState* state);
 
 /**
  * @brief 활성 블록 상태(타입/회전/x/y) 송신. 매 틱 호출 권장.

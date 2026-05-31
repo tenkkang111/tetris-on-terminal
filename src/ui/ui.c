@@ -4,6 +4,7 @@
 #include <ncurses.h>
 #include <string.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 #define BOARD_W 10
 #define BOARD_H 20
@@ -52,15 +53,18 @@ UiKey uiPollKey(void)
 {
     int ch = getch();
     switch (ch) {
-        case ERR:       return UI_KEY_NONE;
-        case KEY_LEFT:  return UI_KEY_LEFT;
-        case KEY_RIGHT: return UI_KEY_RIGHT;
-        case KEY_DOWN:  return UI_KEY_DOWN;
-        case KEY_UP:    return UI_KEY_ROTATE;
-        case ' ':       return UI_KEY_HARD_DROP;
+        case ERR:           return UI_KEY_NONE;
+        case KEY_LEFT:      return UI_KEY_LEFT;
+        case KEY_RIGHT:     return UI_KEY_RIGHT;
+        case KEY_DOWN:      return UI_KEY_SOFT_DROP;
+        case KEY_UP:
+        case 'x': case 'X': return UI_KEY_ROTATE_CW;
+        case 'z': case 'Z': return UI_KEY_ROTATE_CCW;
+        case 'a': case 'A': return UI_KEY_ROTATE_180;
+        case ' ':           return UI_KEY_HARD_DROP;
         case 'c': case 'C': return UI_KEY_HOLD;
         case 'q': case 'Q': return UI_KEY_QUIT;
-        default:        return UI_KEY_NONE;
+        default:            return UI_KEY_NONE;
     }
 }
 
@@ -76,6 +80,15 @@ static void drawCell(int row, int col, uint8_t type)
     if (type == GARBAGE) mvaddstr(row, col, "##");
     else                  mvaddstr(row, col, "[]");
     if (gColors) attroff(COLOR_PAIR(cp) | A_BOLD);
+}
+
+/* Ghost piece 셀: 같은 색, dim 속성 */
+static void drawGhostCell(int row, int col, BlockType type)
+{
+    int cp = colorForType(type);
+    if (gColors) attron(COLOR_PAIR(cp) | A_DIM);
+    mvaddstr(row, col, "::");
+    if (gColors) attroff(COLOR_PAIR(cp) | A_DIM);
 }
 
 /* 4x4 미니 박스 안에 블록 모양 출력 (HOLD/NEXT 미리보기) */
@@ -138,16 +151,18 @@ static void drawMiniFrame(int top, int left, const char* label)
 }
 
 /* 한 플레이어 패널 렌더링.
- * leftCol: 패널의 왼쪽 시작 화면 col
- * activeOverlay: NULL이면 오버레이 생략 (상대 화면용)
+ * activeOverlay/ghostY: NULL/음수면 생략 (상대 화면용)
+ * b2b/combo/lines: 음수(-1)면 표시 생략
  */
 static void drawPlayerPanel(int topRow, int leftCol, const char* title,
                             const uint8_t board[20][10],
                             const CurrentBlock* activeOverlay,
+                            int ghostY,
                             BlockType holdBlock,
                             const BagSystem* bag,
                             uint32_t score,
-                            uint8_t pendingGarbage)
+                            uint8_t pendingGarbage,
+                            int b2b, int combo, long totalLines)
 {
     mvprintw(topRow, leftCol, "%s", title);
 
@@ -166,6 +181,22 @@ static void drawPlayerPanel(int topRow, int leftCol, const char* title,
     for (int r = 0; r < BOARD_H; r++) {
         for (int c = 0; c < BOARD_W; c++) {
             drawCell(boardTop + 1 + r, boardLeft + 1 + c * CELL_W, board[r][c]);
+        }
+    }
+
+    /* Ghost piece (먼저 그려서 active가 덮어쓰게) */
+    if (activeOverlay && activeOverlay->type != EMPTY && ghostY >= 0
+        && ghostY != activeOverlay->y) {
+        int cells[4][2];
+        getPieceCells(activeOverlay->type, activeOverlay->rotation,
+                      activeOverlay->x, ghostY, cells);
+        for (int i = 0; i < 4; i++) {
+            int r = cells[i][0];
+            int c = cells[i][1];
+            if (r >= 0 && r < BOARD_H && c >= 0 && c < BOARD_W) {
+                drawGhostCell(boardTop + 1 + r, boardLeft + 1 + c * CELL_W,
+                              activeOverlay->type);
+            }
         }
     }
 
@@ -190,14 +221,26 @@ static void drawPlayerPanel(int topRow, int leftCol, const char* title,
     mvprintw(boardTop,     infoLeft, "SCORE");
     mvprintw(boardTop + 1, infoLeft, "%06u", score);
 
-    mvprintw(boardTop + 3, infoLeft, "GARBAGE");
+    if (totalLines >= 0) {
+        mvprintw(boardTop + 2, infoLeft, "LINES");
+        mvprintw(boardTop + 3, infoLeft, "%05ld", totalLines);
+    }
+
+    mvprintw(boardTop + 5, infoLeft, "GARBAGE");
     if (gColors) attron(COLOR_PAIR(GARBAGE) | A_BOLD);
-    mvprintw(boardTop + 4, infoLeft, "%2u", pendingGarbage);
+    mvprintw(boardTop + 6, infoLeft, "%2u", pendingGarbage);
     if (gColors) attroff(COLOR_PAIR(GARBAGE) | A_BOLD);
+
+    if (b2b >= 0 && b2b > 0) {
+        mvprintw(boardTop + 8, infoLeft, "B2B x%d", b2b);
+    }
+    if (combo >= 0 && combo > 1) {
+        mvprintw(boardTop + 9, infoLeft, "COMBO x%d", combo);
+    }
 
     /* NEXT 미리보기 5개 (bag 정보가 있을 때만) */
     if (bag) {
-        mvprintw(boardTop + 6, infoLeft, "NEXT");
+        mvprintw(boardTop + 11, infoLeft, "NEXT");
         for (int i = 0; i < 5; i++) {
             int idx = (int)bag->currentIndex + i;
             BlockType t;
@@ -211,7 +254,7 @@ static void drawPlayerPanel(int topRow, int leftCol, const char* title,
             if (t == EMPTY) continue;
             int cells[4][2];
             getPieceCells(t, 0, 0, 0, cells);
-            int rowBase = boardTop + 7 + i * 3;
+            int rowBase = boardTop + 12 + i * 3;
             /* 작은 공간(3행)에 그리기 위해 4x2 영역으로 압축해 그림.
              * 단순히 0~3 행/열 매핑을 그대로 사용해도 시각적으로 OK. */
             for (int j = 0; j < 4; j++) {
@@ -234,22 +277,48 @@ void uiRender(const GameState* me, const NetContext* netCtx)
     mvprintw(0, 2, "%s", title);
 
     /* 본인 패널 */
+    int ghostY = ghostDropY(me);
     drawPlayerPanel(2, 2, "[ YOU ]",
-                    me->board, &me->activeBlock, me->holdBlock, &me->bagState,
-                    me->score, me->pendingGarbage);
+                    me->board, &me->activeBlock, ghostY,
+                    me->holdBlock, &me->bagState,
+                    me->score, me->pendingGarbage,
+                    (int)me->b2b, (int)me->combo, (long)me->totalLines);
 
     /* 상대 패널 */
     if (netCtx) {
-        int rightLeft = 2 + 1 + 4 * CELL_W + 4 + 1 + BOARD_W * CELL_W + 12;
+        int rightLeft = 2 + 1 + 4 * CELL_W + 4 + 1 + BOARD_W * CELL_W + 14;
         const CurrentBlock* oppActive =
             netCtx->opponentHasActive ? &netCtx->opponentActive : NULL;
+        int oppGhost = -1;
+        if (oppActive) {
+            /* 상대 보드 + active로 ghost y 계산 (간이) */
+            int gy = oppActive->y;
+            int cells[4][2];
+            while (1) {
+                bool collide = false;
+                getPieceCells(oppActive->type, oppActive->rotation,
+                              oppActive->x, gy + 1, cells);
+                for (int i = 0; i < 4; i++) {
+                    int r = cells[i][0], c = cells[i][1];
+                    if (c < 0 || c >= BOARD_W || r >= BOARD_H) { collide = true; break; }
+                    if (r >= 0 && netCtx->opponentBoard[r][c] != EMPTY) { collide = true; break; }
+                }
+                if (collide) break;
+                gy++;
+            }
+            oppGhost = gy;
+        }
         drawPlayerPanel(2, rightLeft, "[ OPPONENT ]",
                         netCtx->opponentBoard,
                         oppActive,
-                        EMPTY,          /* 상대 hold도 미전송 */
-                        NULL,           /* 상대 NEXT도 미전송 */
+                        oppGhost,
+                        netCtx->opponentHold,
+                        &netCtx->opponentBag,
                         netCtx->opponentScore,
-                        0);
+                        netCtx->opponentPendingGarbage,
+                        (int)netCtx->opponentB2b,
+                        (int)netCtx->opponentCombo,
+                        (long)netCtx->opponentTotalLines);
         /* 연결/오버 상태 표시 */
         const char* statusMsg;
         if (!netCtx->connected) statusMsg = "Status: DISCONNECTED";
@@ -261,7 +330,7 @@ void uiRender(const GameState* me, const NetContext* netCtx)
     /* 컨트롤 안내 */
     int controlsRow = 2 + 2 + BOARD_H + 2;
     mvprintw(controlsRow, 2,
-             "Controls: < > Move   v Soft Drop   ^ Rotate   Space Hard Drop   C Hold   Q Quit");
+             "Controls: < > Move   v Soft   X/^ CW   Z CCW   A 180   Space Hard   C Hold   Q Quit");
 
     refresh();
 }

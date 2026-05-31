@@ -16,10 +16,14 @@
 #define MSG_LOCK  0x02
 #define MSG_OVER  0x03
 #define MSG_STATE 0x04
+#define MSG_HOLD  0x05
 
 #define BOARD_BYTES 200u
-#define LOCK_PAYLOAD  (1u + 1u + 4u + BOARD_BYTES)  /* type + garbage + score + board */
+/* type + garbage + score(4) + board(200) + hold + pendingG + b2b + combo(2)
+   + lines(4) + bagIdx + bag(7) + nextBag(7) = 230 */
+#define LOCK_PAYLOAD  (1u + 1u + 4u + BOARD_BYTES + 1u + 1u + 1u + 2u + 4u + 1u + 7u + 7u)
 #define STATE_PAYLOAD (1u + 1u + 1u + 1u + 1u)       /* type + type + rotation + x + y */
+#define HOLD_PAYLOAD  (1u + 1u + 1u)                  /* type + hold + bagIdx */
 
 static int sendAll(int sock, const void* buf, size_t len)
 {
@@ -166,11 +170,35 @@ int netSendLock(NetContext* ctx, const GameState* state, uint8_t garbageToSend)
     if (!ctx->connected) return 0;
 
     uint8_t buf[LOCK_PAYLOAD];
-    buf[0] = MSG_LOCK;
-    buf[1] = garbageToSend;
-    writeU32LE(buf + 2, state->score);
-    memcpy(buf + 6, state->board, BOARD_BYTES);
+    size_t p = 0;
+    buf[p++] = MSG_LOCK;
+    buf[p++] = garbageToSend;
+    writeU32LE(buf + p, state->score); p += 4;
+    memcpy(buf + p, state->board, BOARD_BYTES); p += BOARD_BYTES;
+    buf[p++] = (uint8_t)state->holdBlock;
+    buf[p++] = state->pendingGarbage;
+    buf[p++] = state->b2b;
+    buf[p++] = (uint8_t)(state->combo & 0xFF);
+    buf[p++] = (uint8_t)((state->combo >> 8) & 0xFF);
+    writeU32LE(buf + p, state->totalLines); p += 4;
+    buf[p++] = state->bagState.currentIndex;
+    for (int i = 0; i < 7; i++) buf[p++] = (uint8_t)state->bagState.bag[i];
+    for (int i = 0; i < 7; i++) buf[p++] = (uint8_t)state->bagState.nextBag[i];
 
+    if (sendAll(ctx->sock, buf, sizeof(buf)) < 0) {
+        ctx->connected = false;
+        return -1;
+    }
+    return 0;
+}
+
+int netSendHold(NetContext* ctx, const GameState* state)
+{
+    if (!ctx->connected) return 0;
+    uint8_t buf[HOLD_PAYLOAD];
+    buf[0] = MSG_HOLD;
+    buf[1] = (uint8_t)state->holdBlock;
+    buf[2] = state->bagState.currentIndex;
     if (sendAll(ctx->sock, buf, sizeof(buf)) < 0) {
         ctx->connected = false;
         return -1;
@@ -232,9 +260,19 @@ int netPoll(NetContext* ctx, GameState* myState)
                 ctx->connected = false;
                 return -1;
             }
-            uint8_t garbage = rest[0];
-            ctx->opponentScore = readU32LE(rest + 1);
-            memcpy(ctx->opponentBoard, rest + 5, BOARD_BYTES);
+            size_t p = 0;
+            uint8_t garbage = rest[p++];
+            ctx->opponentScore = readU32LE(rest + p); p += 4;
+            memcpy(ctx->opponentBoard, rest + p, BOARD_BYTES); p += BOARD_BYTES;
+            ctx->opponentHold = (BlockType)rest[p++];
+            ctx->opponentPendingGarbage = rest[p++];
+            ctx->opponentB2b = rest[p++];
+            ctx->opponentCombo = (uint16_t)rest[p] | ((uint16_t)rest[p + 1] << 8);
+            p += 2;
+            ctx->opponentTotalLines = readU32LE(rest + p); p += 4;
+            ctx->opponentBag.currentIndex = rest[p++];
+            for (int i = 0; i < 7; i++) ctx->opponentBag.bag[i] = (BlockType)rest[p++];
+            for (int i = 0; i < 7; i++) ctx->opponentBag.nextBag[i] = (BlockType)rest[p++];
 
             if (garbage > 0) {
                 uint16_t total = (uint16_t)myState->pendingGarbage + (uint16_t)garbage;
@@ -244,6 +282,18 @@ int netPoll(NetContext* ctx, GameState* myState)
             /* lock 시점에 활성 블록은 이미 보드에 박혔으므로,
              * 다음 STATE가 올 때까지 상대 active 표시는 잠깐 숨김. */
             ctx->opponentHasActive = false;
+            handled++;
+            continue;
+        }
+
+        if (header == MSG_HOLD) {
+            uint8_t rest[HOLD_PAYLOAD - 1];
+            if (recvAll(ctx->sock, rest, sizeof(rest)) < 0) {
+                ctx->connected = false;
+                return -1;
+            }
+            ctx->opponentHold = (BlockType)rest[0];
+            ctx->opponentBag.currentIndex = rest[1];
             handled++;
             continue;
         }
