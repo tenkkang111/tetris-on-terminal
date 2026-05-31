@@ -93,9 +93,9 @@ static inline int typeToIndex(BlockType type)
  * @param originY 블록 원점의 행(y)
  * @param out    결과를[4][2] 배열
  */
-static void getCells(BlockType type, int rot,
-                     int originX, int originY,
-                     int out[4][2])
+void getPieceCells(BlockType type, int rot,
+                   int originX, int originY,
+                   int out[4][2])
 {
     const int8_t (*shape)[2] = shapes[typeToIndex(type)][rot];
     for (int i = 0; i < PIECE_CELLS; i++) {
@@ -122,7 +122,7 @@ static void getCells(BlockType type, int rot,
 bool checkCollision(GameState* state, int nextX, int nextY, int nextRot)
 {
     int cells[4][2];
-    getCells(state->activeBlock.type, nextRot, nextX, nextY, cells);
+    getPieceCells(state->activeBlock.type, nextRot, nextX, nextY, cells);
  
     for (int i = 0; i < PIECE_CELLS; i++) {
         int row = cells[i][0];
@@ -156,7 +156,7 @@ void lockBlock(GameState* state)
 {
     CurrentBlock* b = &state->activeBlock;
     int cells[4][2];
-    getCells(b->type, b->rotation, b->x, b->y, cells);
+    getPieceCells(b->type, b->rotation, b->x, b->y, cells);
  
     for (int i = 0; i < PIECE_CELLS; i++) {
         int row = cells[i][0];

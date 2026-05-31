@@ -21,5 +21,6 @@ bool checkCollision(GameState* state, int nextX, int nextY, int nextRot);
 void lockBlock(GameState* state); // network 이벤트 타이밍
 int checkAndClearLines(GameState* state);
 void applyPendingGarbage(GameState* state);
+void getPieceCells(BlockType type, int rot, int originX, int originY, int out[4][2]);
 
 #endif
