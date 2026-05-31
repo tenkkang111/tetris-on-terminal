@@ -10,9 +10,13 @@
 #define BOARD_W 10
 #define BOARD_H 20
 #define CELL_W  2
-#define NEXT_DISPLAY_CAP 7   /* 화면 폭 한계로 표시 상한 */
+#define NEXT_DISPLAY_CAP 7
 
-/* 티어 컬러 페어 (1~8은 BlockType이 사용중) */
+#define MIN_COLS_SINGLE 55
+#define MIN_ROWS_SINGLE 28
+#define MIN_COLS_MULTI  115
+#define MIN_ROWS_MULTI  28
+
 #define TIER_PAIR_BRONZE 20
 #define TIER_PAIR_SILVER 21
 #define TIER_PAIR_GOLD   22
@@ -50,9 +54,169 @@ void uiInit(void)
         gColors = true;
     }
 
-    /* 마우스 활성화. 미지원 터미널에서는 그냥 효과 없음 */
     mousemask(BUTTON1_PRESSED | BUTTON1_RELEASED | BUTTON1_CLICKED, NULL);
     mouseinterval(0);
+}
+
+bool uiCheckScreenSize(bool isMultiplayer)
+{
+    int minCols = isMultiplayer ? MIN_COLS_MULTI : MIN_COLS_SINGLE;
+    int minRows = isMultiplayer ? MIN_ROWS_MULTI : MIN_ROWS_SINGLE;
+
+    if (COLS < minCols || LINES < minRows) {
+        clear();
+        mvprintw(0, 0, "WARNING: Terminal too small!");
+        mvprintw(1, 0, "Current: %dx%d, Required: %dx%d", COLS, LINES, minCols, minRows);
+        mvprintw(3, 0, "Please resize your terminal window.");
+        mvprintw(4, 0, "Press any key to continue anyway, or Q to quit.");
+        refresh();
+        nodelay(stdscr, FALSE);
+        int ch = getch();
+        nodelay(stdscr, TRUE);
+        if (ch == 'q' || ch == 'Q') {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool uiIsScreenSizeOk(bool isMultiplayer)
+{
+    int minCols = isMultiplayer ? MIN_COLS_MULTI : MIN_COLS_SINGLE;
+    int minRows = isMultiplayer ? MIN_ROWS_MULTI : MIN_ROWS_SINGLE;
+    return (COLS >= minCols && LINES >= minRows);
+}
+
+void uiDrawPauseOverlay(bool isMultiplayer)
+{
+    int minCols = isMultiplayer ? MIN_COLS_MULTI : MIN_COLS_SINGLE;
+    int minRows = isMultiplayer ? MIN_ROWS_MULTI : MIN_ROWS_SINGLE;
+
+    erase();
+
+    bool needWidth = (COLS < minCols);
+    bool needHeight = (LINES < minRows);
+
+    /* Help Grid */
+    if (gColors) attron(COLOR_PAIR(5) | A_DIM);
+
+    for (int x = 0; x < COLS && x < minCols; x++) {
+        mvaddch(0, x, '-');
+    }
+
+    if (minRows - 1 < LINES) {
+        for (int x = 0; x < COLS && x < minCols; x++) {
+            mvaddch(minRows - 1, x, '-');
+        }
+    }
+
+    for (int y = 0; y < LINES && y < minRows; y++) {
+        mvaddch(y, 0, '|');
+    }
+
+    if (minCols - 1 < COLS) {
+        for (int y = 0; y < LINES && y < minRows; y++) {
+            mvaddch(y, minCols - 1, '|');
+        }
+    }
+
+    mvaddch(0, 0, '+');
+    if (minCols - 1 < COLS) mvaddch(0, minCols - 1, '+');
+    if (minRows - 1 < LINES) mvaddch(minRows - 1, 0, '+');
+    if (minCols - 1 < COLS && minRows - 1 < LINES) mvaddch(minRows - 1, minCols - 1, '+');
+
+    if (gColors) attroff(COLOR_PAIR(5) | A_DIM);
+
+    /* Direction Arrows */
+    if (gColors) attron(COLOR_PAIR(7) | A_BOLD);
+
+    if (needWidth) {
+        int arrowX = COLS - 1;
+        for (int y = 1; y < LINES - 1; y += 2) {
+            mvaddch(y, arrowX, '>');
+        }
+        if (COLS > 12) {
+            char widthHint[24];
+            snprintf(widthHint, sizeof(widthHint), "+%d cols", minCols - COLS);
+            int hintLen = (int)strlen(widthHint);
+            mvprintw(1, COLS - hintLen - 1, "%s", widthHint);
+        }
+    }
+
+    if (needHeight) {
+        int arrowY = LINES - 1;
+        for (int x = 2; x < COLS - 1; x += 3) {
+            mvaddch(arrowY, x, 'v');
+        }
+        if (COLS > 12) {
+            char heightHint[24];
+            snprintf(heightHint, sizeof(heightHint), "+%d rows", minRows - LINES);
+            mvprintw(LINES - 1, 1, "%s", heightHint);
+        }
+    }
+
+    if (gColors) attroff(COLOR_PAIR(7) | A_BOLD);
+
+    /* Center Box */
+    int boxW = 34;
+    int boxH = 7;
+    int boxX = (COLS - boxW) / 2;
+    int boxY = (LINES - boxH) / 2;
+    if (boxX < 1) boxX = 1;
+    if (boxY < 1) boxY = 1;
+    if (boxX + boxW > COLS - 1) boxW = COLS - boxX - 1;
+    if (boxY + boxH > LINES - 1) boxH = LINES - boxY - 1;
+
+    if (boxW < 18 || boxH < 5) {
+        if (gColors) attron(COLOR_PAIR(4) | A_BOLD);
+        mvprintw(LINES / 2, 1, "RESIZE!");
+        if (gColors) attroff(COLOR_PAIR(4) | A_BOLD);
+        refresh();
+        return;
+    }
+
+    for (int y = boxY; y < boxY + boxH; y++) {
+        for (int x = boxX; x < boxX + boxW; x++) {
+            mvaddch(y, x, ' ');
+        }
+    }
+
+    if (gColors) attron(COLOR_PAIR(4) | A_BOLD);
+    for (int x = boxX; x < boxX + boxW; x++) {
+        mvaddch(boxY, x, ACS_HLINE);
+        mvaddch(boxY + boxH - 1, x, ACS_HLINE);
+    }
+    for (int y = boxY; y < boxY + boxH; y++) {
+        mvaddch(y, boxX, ACS_VLINE);
+        mvaddch(y, boxX + boxW - 1, ACS_VLINE);
+    }
+    mvaddch(boxY, boxX, ACS_ULCORNER);
+    mvaddch(boxY, boxX + boxW - 1, ACS_URCORNER);
+    mvaddch(boxY + boxH - 1, boxX, ACS_LLCORNER);
+    mvaddch(boxY + boxH - 1, boxX + boxW - 1, ACS_LRCORNER);
+    if (gColors) attroff(COLOR_PAIR(4) | A_BOLD);
+
+    int row = boxY + 1;
+    const char* title = "GAME PAUSED";
+    int titleX = boxX + (boxW - (int)strlen(title)) / 2;
+    if (gColors) attron(COLOR_PAIR(4) | A_BOLD);
+    mvprintw(row, titleX, "%s", title);
+    if (gColors) attroff(COLOR_PAIR(4) | A_BOLD);
+
+    row += 2;
+    char sizeBuf[36];
+    snprintf(sizeBuf, sizeof(sizeBuf), "Need %dx%d  Now %dx%d", minCols, minRows, COLS, LINES);
+    int sizeX = boxX + (boxW - (int)strlen(sizeBuf)) / 2;
+    mvprintw(row, sizeX, "%s", sizeBuf);
+
+    row += 2;
+    const char* hint = "Resize to continue";
+    int hintX = boxX + (boxW - (int)strlen(hint)) / 2;
+    if (gColors) attron(A_DIM);
+    mvprintw(row, hintX, "%s", hint);
+    if (gColors) attroff(A_DIM);
+
+    refresh();
 }
 
 void uiShutdown(void) { endwin(); }
@@ -74,7 +238,7 @@ UiKey uiPollKey(void)
         case 'q': case 'Q': return UI_KEY_QUIT;
         case KEY_MOUSE: {
             MEVENT ev;
-            (void)getmouse(&ev);  /* 일반 게임 중 마우스는 무시 */
+            (void)getmouse(&ev);
             return UI_KEY_NONE;
         }
         default:            return UI_KEY_NONE;
@@ -178,11 +342,12 @@ static void drawPlayerPanel(int topRow, int leftCol, const char* title,
                             uint32_t score,
                             uint8_t pendingGarbage,
                             int b2b, int combo, long totalLines,
-                            int level, int xp, int xpToNext)
+                            int level, int xp, int xpToNext,
+                            float lockProgress)
 {
     mvprintw(topRow, leftCol, "%s", title);
 
-    /* 레벨/XP 바 (level >= 0이면 표시) */
+    /* Level/XP Bar */
     if (level >= 0) {
         mvprintw(topRow + 1, leftCol, "LV %d", level);
         if (xpToNext > 0) {
@@ -205,14 +370,44 @@ static void drawPlayerPanel(int topRow, int leftCol, const char* title,
     drawMiniFrame(holdTop, holdLeft, "HOLD");
     drawMiniPiece(holdTop + 1, holdLeft, holdBlock);
 
+    /* HUD */
+    int hudTop = holdTop + 7;
+    int hudLeft = leftCol;
+
+    mvprintw(hudTop, hudLeft, "SCORE");
+    if (gColors) attron(A_BOLD);
+    mvprintw(hudTop + 1, hudLeft, "%06u", score);
+    if (gColors) attroff(A_BOLD);
+
+    if (totalLines >= 0) {
+        mvprintw(hudTop + 3, hudLeft, "LINES");
+        mvprintw(hudTop + 4, hudLeft, "%05ld", totalLines);
+    }
+
+    mvprintw(hudTop + 6, hudLeft, "GARBAGE");
+    if (gColors) attron(COLOR_PAIR(GARBAGE) | A_BOLD);
+    mvprintw(hudTop + 7, hudLeft, "%2u", pendingGarbage);
+    if (gColors) attroff(COLOR_PAIR(GARBAGE) | A_BOLD);
+
+    if (b2b >= 0 && b2b > 0)
+        mvprintw(hudTop + 9, hudLeft, "B2B x%d", b2b);
+    else
+        mvprintw(hudTop + 9, hudLeft, "       ");
+
+    if (combo >= 0 && combo > 1)
+        mvprintw(hudTop + 10, hudLeft, "CMB x%d", combo);
+    else
+        mvprintw(hudTop + 10, hudLeft, "       ");
+
     /* Board */
     int boardTop  = topRow + 2;
-    int boardLeft = leftCol + 1 + 4 * CELL_W + 4;
+    int boardLeft = leftCol + 12;
     drawBoardFrame(boardTop, boardLeft);
     for (int r = 0; r < BOARD_H; r++)
         for (int c = 0; c < BOARD_W; c++)
             drawCell(boardTop + 1 + r, boardLeft + 1 + c * CELL_W, board[r][c]);
 
+    /* Ghost Piece */
     if (activeOverlay && activeOverlay->type != EMPTY && ghostY >= 0
         && ghostY != activeOverlay->y) {
         int cells[4][2];
@@ -225,6 +420,8 @@ static void drawPlayerPanel(int topRow, int leftCol, const char* title,
                               activeOverlay->type);
         }
     }
+
+    /* Active Piece */
     if (activeOverlay && activeOverlay->type != EMPTY) {
         int cells[4][2];
         getPieceCells(activeOverlay->type, activeOverlay->rotation,
@@ -237,23 +434,43 @@ static void drawPlayerPanel(int topRow, int leftCol, const char* title,
         }
     }
 
-    int infoLeft = boardLeft + 1 + BOARD_W * CELL_W + 3;
-    mvprintw(boardTop,     infoLeft, "SCORE");
-    mvprintw(boardTop + 1, infoLeft, "%06u", score);
-    if (totalLines >= 0) {
-        mvprintw(boardTop + 2, infoLeft, "LINES");
-        mvprintw(boardTop + 3, infoLeft, "%05ld", totalLines);
+    /* Lock Delay Bar */
+    int lockRow = boardTop + BOARD_H + 2;
+    if (lockProgress >= 0.0f) {
+        int barW = 10;
+        int filled = (int)(lockProgress * barW);
+        if (filled > barW) filled = barW;
+        mvprintw(lockRow, boardLeft + 1, "LOCK [");
+        for (int i = 0; i < barW; i++) {
+            if (i < filled) {
+                if (gColors) {
+                    if (lockProgress < 0.5f) attron(COLOR_PAIR(S) | A_BOLD);
+                    else if (lockProgress < 0.8f) attron(COLOR_PAIR(L) | A_BOLD);
+                    else attron(COLOR_PAIR(Z) | A_BOLD);
+                }
+                addch('#');
+                if (gColors) attroff(COLOR_PAIR(S) | COLOR_PAIR(L) | COLOR_PAIR(Z) | A_BOLD);
+            } else {
+                addch('.');
+            }
+        }
+        addch(']');
+    } else {
+        mvprintw(lockRow, boardLeft + 1, "                  ");
     }
-    mvprintw(boardTop + 5, infoLeft, "GARBAGE");
-    if (gColors) attron(COLOR_PAIR(GARBAGE) | A_BOLD);
-    mvprintw(boardTop + 6, infoLeft, "%2u", pendingGarbage);
-    if (gColors) attroff(COLOR_PAIR(GARBAGE) | A_BOLD);
-    if (b2b >= 0 && b2b > 0)    mvprintw(boardTop + 8, infoLeft, "B2B x%d", b2b);
-    if (combo >= 0 && combo > 1) mvprintw(boardTop + 9, infoLeft, "COMBO x%d", combo);
+
+    /* NEXT */
+    int nextLeft = boardLeft + 1 + BOARD_W * CELL_W + 3;
+    int nextTop = boardTop;
 
     if (bag && nextCount > 0) {
         if (nextCount > NEXT_DISPLAY_CAP) nextCount = NEXT_DISPLAY_CAP;
-        mvprintw(boardTop + 11, infoLeft, "NEXT");
+
+        mvprintw(nextTop, nextLeft, "NEXT");
+
+        int maxVisible = (BOARD_H - 1) / 3;
+        if (nextCount > maxVisible) nextCount = maxVisible;
+
         for (int i = 0; i < nextCount; i++) {
             int idx = (int)bag->currentIndex + i;
             BlockType t;
@@ -261,13 +478,15 @@ static void drawPlayerPanel(int topRow, int leftCol, const char* title,
             else if (idx - 7 < 7)     t = bag->nextBag[idx - 7];
             else                       t = EMPTY;
             if (t == EMPTY) continue;
+
             int cells[4][2];
             getPieceCells(t, 0, 0, 0, cells);
-            int rowBase = boardTop + 12 + i * 3;
+            int rowBase = nextTop + 2 + i * 3;
+
             for (int j = 0; j < 4; j++) {
                 int r = cells[j][0], c = cells[j][1];
-                if (r >= 0 && r < 3 && c >= 0 && c < 4)
-                    drawCell(rowBase + r, infoLeft + c * CELL_W, (uint8_t)t);
+                if (r >= 0 && r < 2 && c >= 0 && c < 4)
+                    drawCell(rowBase + r, nextLeft + c * CELL_W, (uint8_t)t);
             }
         }
     }
@@ -303,7 +522,8 @@ static void drawAugmentList(int row, int leftCol, const AugInventory* inv)
 }
 
 void uiRender(const GameState* me, const NetContext* netCtx,
-              const AugInventory* augInv, const LevelState* lvl)
+              const AugInventory* augInv, const LevelState* lvl,
+              float lockProgress)
 {
     erase();
 
@@ -321,10 +541,10 @@ void uiRender(const GameState* me, const NetContext* netCtx,
                     me->holdBlock, &me->bagState, myNextCount,
                     me->score, me->pendingGarbage,
                     (int)me->b2b, (int)me->combo, (long)me->totalLines,
-                    myLvl, myXp, myXpNext);
+                    myLvl, myXp, myXpNext, lockProgress);
 
     if (netCtx) {
-        int rightLeft = 2 + 1 + 4 * CELL_W + 4 + 1 + BOARD_W * CELL_W + 14;
+        int rightLeft = 2 + 12 + (BOARD_W * CELL_W + 2) + 10 + 4;
         const CurrentBlock* oppActive =
             netCtx->opponentHasActive ? &netCtx->opponentActive : NULL;
         int oppGhost = -1;
@@ -351,7 +571,7 @@ void uiRender(const GameState* me, const NetContext* netCtx,
                         netCtx->opponentScore, netCtx->opponentPendingGarbage,
                         (int)netCtx->opponentB2b, (int)netCtx->opponentCombo,
                         (long)netCtx->opponentTotalLines,
-                        -1, 0, 0);
+                        -1, 0, 0, -1.0f);
     }
 
     int controlsRow = 2 + 2 + BOARD_H + 2;
@@ -363,7 +583,7 @@ void uiRender(const GameState* me, const NetContext* netCtx,
     refresh();
 }
 
-/* ---- 카드 모달 ---- */
+/* ---- Card Modal ---- */
 
 #define CARD_W 22
 #define CARD_H 11
@@ -376,7 +596,6 @@ static void drawCard(Rect r, OwnedAugment a, int hotkey, bool hover)
     int cp = tierColorPair(a.tier);
     int attrs = tierAttrs(a.tier);
 
-    /* border */
     chtype hl = ACS_HLINE, vl = ACS_VLINE;
     if (hover) { hl = '='; vl = '|'; }
 
@@ -392,17 +611,14 @@ static void drawCard(Rect r, OwnedAugment a, int hotkey, bool hover)
     for (int i = 0; i < r.w - 2; i++) mvaddch(r.y + r.h - 1, r.x + 1 + i, hl);
     mvaddch(r.y + r.h - 1, r.x + r.w - 1, ACS_LRCORNER);
 
-    /* tier */
     if (cp > 0) attron(COLOR_PAIR(cp) | attrs);
     const char* tname = tierName(a.tier);
     int tw = (int)strlen(tname);
     mvprintw(r.y + 2, r.x + (r.w - tw) / 2, "%s", tname);
     if (cp > 0) attroff(COLOR_PAIR(cp) | attrs);
 
-    /* divider */
     for (int i = 0; i < r.w - 2; i++) mvaddch(r.y + 3, r.x + 1 + i, ACS_HLINE);
 
-    /* augment name */
     const AugmentDef* d = augmentDef(a.id);
     const char* nm = d ? d->name : "?";
     int nw = (int)strlen(nm);
@@ -410,13 +626,11 @@ static void drawCard(Rect r, OwnedAugment a, int hotkey, bool hover)
     mvprintw(r.y + 5, r.x + (r.w - nw) / 2, "%s", nm);
     if (cp > 0) attroff(COLOR_PAIR(cp));
 
-    /* description */
     char desc[64];
     augDescribe(a, desc, sizeof(desc));
     int dw = (int)strlen(desc);
     mvprintw(r.y + 7, r.x + (r.w - dw) / 2, "%s", desc);
 
-    /* hotkey */
     char k[6];
     snprintf(k, sizeof(k), "[ %d ]", hotkey);
     int kw = (int)strlen(k);
@@ -446,10 +660,8 @@ int uiCardSelectModal(const GameState* me, NetContext* netCtx,
     int hoverIdx = -1;
 
     while (selected < 0) {
-        /* 게임 화면을 덮지 않고 전체를 비움 (모달 전용 화면) */
         erase();
 
-        /* 상단 레벨 표시 */
         if (lvl) {
             char lbuf[32];
             snprintf(lbuf, sizeof(lbuf), "LEVEL %d", lvl->level);
@@ -457,25 +669,21 @@ int uiCardSelectModal(const GameState* me, NetContext* netCtx,
             mvprintw(startY - 4, (COLS - lw) / 2, "%s", lbuf);
         }
 
-        /* 배너 */
         const char* banner = "*** LEVEL UP! Pick a card ***";
         int bw = (int)strlen(banner);
         if (gColors) attron(COLOR_PAIR(TIER_PAIR_PRISM) | A_BOLD);
         mvprintw(startY - 2, (COLS - bw) / 2, "%s", banner);
         if (gColors) attroff(COLOR_PAIR(TIER_PAIR_PRISM) | A_BOLD);
 
-        /* 카드 */
         for (int i = 0; i < 3; i++)
             drawCard(cardR[i], offer->offers[i], i + 1, hoverIdx == i);
 
-        /* 힌트 */
         const char* hint = "Click a card or press 1 / 2 / 3      ( Q to quit )";
         int hw = (int)strlen(hint);
         mvprintw(startY + CARD_H + 1, (COLS - hw) / 2, "%s", hint);
 
         refresh();
 
-        /* 입력 드레인 */
         int ch;
         while ((ch = getch()) != ERR) {
             if (ch == '1') { selected = 0; break; }
@@ -501,7 +709,6 @@ int uiCardSelectModal(const GameState* me, NetContext* netCtx,
             }
         }
 
-        /* 네트워크 큐 비우기 — 표시는 안 하지만 큐 누적 방지 */
         if (netCtx && netCtx->mode != NET_MODE_NONE) {
             netPoll(netCtx, (GameState*)me);
         }
