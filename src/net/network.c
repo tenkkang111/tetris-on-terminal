@@ -275,10 +275,12 @@ int netPoll(NetContext* ctx, GameState* myState)
             for (int i = 0; i < 7; i++) ctx->opponentBag.nextBag[i] = (BlockType)rest[p++];
 
             if (garbage > 0) {
-                uint16_t total = (uint16_t)myState->pendingGarbage + (uint16_t)garbage;
-                if (total > 20) total = 20;
-                myState->pendingGarbage = (uint8_t)total;
+                uint16_t total = (uint16_t)ctx->incomingGarbageBuf + (uint16_t)garbage;
+                if (total > 40) total = 40;
+                ctx->incomingGarbageBuf = (uint8_t)total;
             }
+            (void)myState;  /* shield 적용을 main이 담당하므로 여기서는 안 건드림 */
+
             /* lock 시점에 활성 블록은 이미 보드에 박혔으므로,
              * 다음 STATE가 올 때까지 상대 active 표시는 잠깐 숨김. */
             ctx->opponentHasActive = false;

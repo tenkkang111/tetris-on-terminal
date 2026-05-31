@@ -62,6 +62,26 @@ make
 - Perfect Clear 보너스
 - Garbage 큐 상쇄 (송신 공격으로 수신 garbage 차감 후 잔량 송신)
 
+## 레벨 / 증강 시스템
+
+- 라인 클리어 시 XP 획득. 최대 레벨 5.
+- 레벨업 시 카드 3장이 제시되며 1장 선택 (마우스 클릭 또는 1 / 2 / 3 키).
+- 카드 등급 가중치: BRONZE 60% / SILVER 25% / GOLD 12% / PRISM 3%.
+- 총 최대 4장 장착 가능. 같은 효과는 누적 합산.
+
+| ID | 효과 | B / S / G / P |
+|----|------|---------------|
+| Score Boost | 점수 +X% | 10 / 25 / 50 / 100 |
+| Tetris Bonus | Tetris +X 공격 | 1 / 2 / 3 / 5 |
+| T-Spin Master | T-spin 클리어 +X 공격 | 1 / 2 / 3 / 5 |
+| Combo King | 콤보≥3 매 단계 +X 공격 | 1 / 2 / 3 / 4 |
+| Aegis | 수신 가비지 X회 차단 | 1 / 3 / 6 / 12 |
+| Iron Grip | Lock reset +X | 5 / 10 / 20 / 40 |
+| Reflexes | Lock delay +X ms | 200 / 500 / 1000 / 2000 |
+| Bag Vision | NEXT +X | 1 / 2 / 3 / 5 |
+| Scholar | XP +X% | 15 / 30 / 50 / 100 |
+| Lucky Star | 락당 +X 점수 | 100 / 300 / 700 / 1500 |
+
 ### 공격 라인 산정
 
 | 종류             | 라인 |

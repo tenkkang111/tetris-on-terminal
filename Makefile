@@ -5,7 +5,8 @@ LDFLAGS := -lncurses
 SRC     := src/main.c \
            $(wildcard src/core/*.c) \
            $(wildcard src/net/*.c) \
-           $(wildcard src/ui/*.c)
+           $(wildcard src/ui/*.c) \
+           $(wildcard src/augment/*.c)
 OBJ     := $(SRC:.c=.o)
 TARGET  := tetris
 

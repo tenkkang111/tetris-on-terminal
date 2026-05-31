@@ -31,6 +31,9 @@ typedef struct {
     uint16_t  opponentCombo;
     uint32_t  opponentTotalLines;
     BagSystem opponentBag;   /* currentIndex / bag / nextBag 사용 (seed는 unused) */
+
+    /* 수신 가비지 스테이징 — main에서 shield 처리 후 state.pendingGarbage로 이동 */
+    uint8_t   incomingGarbageBuf;
 } NetContext;
 
 /**

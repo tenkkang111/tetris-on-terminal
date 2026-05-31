@@ -3,6 +3,7 @@
 
 #include "common.h"
 #include "network.h"
+#include "augment.h"
 
 typedef enum {
     UI_KEY_NONE = 0,
@@ -20,25 +21,26 @@ typedef enum {
 void uiInit(void);
 void uiShutdown(void);
 
-/**
- * @brief 비차단 키 입력 1회 폴링.
- */
 UiKey uiPollKey(void);
 
 /**
  * @brief 1프레임 렌더링.
- *        netCtx == NULL: 싱글, 아니면 듀얼(본인 + 상대).
+ *        netCtx == NULL: 싱글, 아니면 듀얼.
+ *        augInv / lvl: NULL이면 표시 생략.
  */
-void uiRender(const GameState* me, const NetContext* netCtx);
+void uiRender(const GameState* me, const NetContext* netCtx,
+              const AugInventory* augInv, const LevelState* lvl);
 
 /**
- * @brief 화면 하단에 한 줄 메시지 출력 + refresh.
+ * @brief 카드 선택 모달. 마우스 클릭 또는 1/2/3 키로 선택.
+ *        선택된 인덱스 반환 (0..2). Q 누르면 -1 (게임 종료 의도).
+ *        모달 중에도 netPoll은 계속 호출되어 상대 메시지 큐가 쌓이지 않음.
  */
+int  uiCardSelectModal(const GameState* me, NetContext* netCtx,
+                       const AugInventory* augInv, const LevelState* lvl,
+                       const CardOffer* offer);
+
 void uiShowMessage(const char* msg);
-
-/**
- * @brief 키 입력을 한 번 기다림 (게임 종료 화면용).
- */
 void uiWaitKey(void);
 
 #endif

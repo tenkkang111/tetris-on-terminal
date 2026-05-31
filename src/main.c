@@ -8,6 +8,7 @@
 #include "core.h"
 #include "network.h"
 #include "ui.h"
+#include "augment.h"
 
 #define GRAVITY_MS      500u
 #define TICK_MS          16u
@@ -15,7 +16,6 @@
 #define MAX_LOCK_RESETS  15
 #define DEFAULT_PORT   5555u
 
-/* DAS/ARR — OS 키 리피트가 상한을 결정하므로 이 값은 '그 이상의 throttle' 역할만 함 */
 #define DAS_MS           150u
 #define ARR_MS            30u
 #define HOLD_RELEASE_MS  100u
@@ -29,6 +29,21 @@ typedef struct {
 
 typedef bool (*MoveFn)(GameState*);
 
+static uint64_t nowMs(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000ULL + (uint64_t)ts.tv_nsec / 1000000ULL;
+}
+
+static void msleep(uint32_t ms)
+{
+    struct timespec ts;
+    ts.tv_sec = ms / 1000;
+    ts.tv_nsec = (long)(ms % 1000) * 1000000L;
+    nanosleep(&ts, NULL);
+}
+
 static bool handleDirHold(KeyHold* h, uint64_t now, MoveFn move, GameState* state)
 {
     bool moved = false;
@@ -37,7 +52,7 @@ static bool handleDirHold(KeyHold* h, uint64_t now, MoveFn move, GameState* stat
         if (move(state)) moved = true;
         h->held = true;
         h->firstPress = now;
-        h->lastShift = now;
+        h->lastShift  = now;
         return moved;
     }
     if (now - h->firstPress >= DAS_MS) {
@@ -49,22 +64,6 @@ static bool handleDirHold(KeyHold* h, uint64_t now, MoveFn move, GameState* stat
     return moved;
 }
 
-static uint64_t nowMs(void)
-{
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (uint64_t)ts.tv_sec * 1000ULL + (uint64_t)ts.tv_nsec / 1000000ULL;
-}
-
-static void msleep(uint32_t ms)
-{
-    struct timespec ts;
-    ts.tv_sec  = ms / 1000;
-    ts.tv_nsec = (long)(ms % 1000) * 1000000L;
-    nanosleep(&ts, NULL);
-}
-
-/* TETR.IO Combo 보너스 테이블 (combo 카운터 인덱스) */
 static uint8_t comboBonus(uint16_t combo)
 {
     static const uint8_t table[] = {0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 4, 5};
@@ -74,9 +73,10 @@ static uint8_t comboBonus(uint16_t combo)
     return table[idx];
 }
 
-/* TETR.IO 공격 라인 계산 */
+/* TETR.IO 공격 + 증강 효과 */
 static uint8_t computeAttack(int lines, TSpinType tspin, bool perfectClear,
-                             bool b2bActive, uint16_t combo)
+                             bool b2bActive, uint16_t combo,
+                             const AugInventory* inv)
 {
     int base = 0;
     bool difficult = false;
@@ -86,27 +86,28 @@ static uint8_t computeAttack(int lines, TSpinType tspin, bool perfectClear,
             case 1: base = 2; difficult = true; break;
             case 2: base = 4; difficult = true; break;
             case 3: base = 6; difficult = true; break;
-            default: break;
         }
+        base += inv->tspinAtk;
     } else if (tspin == TSPIN_MINI) {
         switch (lines) {
             case 1: base = 0; difficult = true; break;
             case 2: base = 1; difficult = true; break;
-            default: break;
         }
+        base += inv->tspinAtk;
     } else {
         switch (lines) {
             case 1: base = 0; break;
             case 2: base = 1; break;
             case 3: base = 2; break;
             case 4: base = 4; difficult = true; break;
-            default: break;
         }
+        if (lines == 4) base += inv->tetrisAtk;
     }
 
     int bonus = 0;
     if (difficult && b2bActive) bonus += 1;
     bonus += (int)comboBonus(combo);
+    if (combo >= 3) bonus += inv->comboAtk * ((int)combo - 2);
     if (perfectClear && lines > 0) bonus += 10;
 
     int total = base + bonus;
@@ -115,9 +116,9 @@ static uint8_t computeAttack(int lines, TSpinType tspin, bool perfectClear,
     return (uint8_t)total;
 }
 
-/* TETR.IO 스코어 (간이판) */
 static uint32_t computeScore(int lines, TSpinType tspin, bool perfectClear,
-                             bool b2bBefore, bool stillDifficult, uint16_t comboAfter)
+                             bool b2bBefore, bool stillDifficult, uint16_t comboAfter,
+                             const AugInventory* inv)
 {
     uint32_t s = 0;
     if (tspin == TSPIN_FULL) {
@@ -141,12 +142,8 @@ static uint32_t computeScore(int lines, TSpinType tspin, bool perfectClear,
             case 4: s = 800; break;
         }
     }
-    if (stillDifficult && b2bBefore && lines > 0) {
-        s = (s * 3) / 2;            /* B2B 1.5x */
-    }
-    if (comboAfter >= 2 && lines > 0) {
-        s += 50u * (comboAfter - 1);
-    }
+    if (stillDifficult && b2bBefore && lines > 0) s = (s * 3) / 2;
+    if (comboAfter >= 2 && lines > 0) s += 50u * (comboAfter - 1);
     if (perfectClear && lines > 0) {
         switch (lines) {
             case 1: s += 800; break;
@@ -155,7 +152,21 @@ static uint32_t computeScore(int lines, TSpinType tspin, bool perfectClear,
             case 4: s += 2000; break;
         }
     }
+    /* 증강: scorePct 가산 */
+    s = s * (100u + (uint32_t)inv->scorePct) / 100u;
     return s;
+}
+
+/* lines + 보너스 XP 산정 */
+static int computeXp(int lines, TSpinType tspin, bool perfectClear, uint16_t comboAfter)
+{
+    int xp = lines;                 /* 라인당 1 */
+    if (lines == 4) xp += 5;        /* Tetris */
+    if (tspin == TSPIN_FULL && lines > 0) xp += 5;
+    if (tspin == TSPIN_MINI && lines > 0) xp += 1;
+    if (comboAfter >= 2)            xp += (int)(comboAfter - 1);
+    if (perfectClear && lines > 0)  xp += 20;
+    return xp;
 }
 
 static void printUsage(const char* prog)
@@ -216,35 +227,37 @@ int main(int argc, char** argv)
     GameState state;
     initGame(&state, seed);
 
+    AugInventory augInv;
+    augInventoryInit(&augInv);
+
+    LevelState L;
+    levelInit(&L);
+
     uiInit();
 
     uint64_t lastGravity = nowMs();
     bool grounded = false;
     uint64_t groundedSince = 0;
-    int resetsLeft = MAX_LOCK_RESETS;
+    int resetsLeft = MAX_LOCK_RESETS + augInv.lockResetBonus;
     int lastActivePieceTag = -1;
 
-    KeyHold leftH  = {0};
-    KeyHold rightH = {0};
-    KeyHold downH  = {0};
+    KeyHold leftH = {0}, rightH = {0}, downH = {0};
 
     while (!state.isGameOver) {
         bool didLock = false;
         bool actedSuccessfully = false;
 
-        /* 새 피스로 바뀌었는지 추적 (간이 태그) */
         int curTag = (int)state.activeBlock.type * 10000 +
                      (int)state.activeBlock.x * 100 +
                      (int)state.activeBlock.y;
         if (curTag != lastActivePieceTag) {
             grounded = false;
-            resetsLeft = MAX_LOCK_RESETS;
+            resetsLeft = MAX_LOCK_RESETS + augInv.lockResetBonus;
             lastActivePieceTag = curTag;
         }
 
         uint64_t inputNow = nowMs();
 
-        /* 입력 소진 — DAS/ARR 적용 */
         for (;;) {
             UiKey key = uiPollKey();
             if (key == UI_KEY_NONE) break;
@@ -267,17 +280,14 @@ int main(int argc, char** argv)
                 case UI_KEY_ROTATE_CCW: ok = rotateCCW(&state); break;
                 case UI_KEY_ROTATE_180: ok = rotate180(&state); break;
                 case UI_KEY_HARD_DROP:  hardDropToBottom(&state); doHardDrop = true; break;
-                case UI_KEY_HOLD:
-                    {
-                        BlockType prevHold = state.holdBlock;
-                        bool prevCanHold = state.canHold;
-                        holdCurrentBlock(&state);
-                        if (prevCanHold && state.holdBlock != prevHold) {
-                            didHold = true;
-                        }
-                    }
+                case UI_KEY_HOLD: {
+                    BlockType prevHold = state.holdBlock;
+                    bool prevCanHold = state.canHold;
+                    holdCurrentBlock(&state);
+                    if (prevCanHold && state.holdBlock != prevHold) didHold = true;
                     break;
-                case UI_KEY_QUIT:       state.isGameOver = true; break;
+                }
+                case UI_KEY_QUIT: state.isGameOver = true; break;
                 default: break;
             }
             if (ok) actedSuccessfully = true;
@@ -288,24 +298,22 @@ int main(int argc, char** argv)
             if (state.isGameOver) break;
         }
 
-        /* DAS/ARR release detection (no recent input → unhold) */
         if (leftH.held  && inputNow - leftH.lastInput  > HOLD_RELEASE_MS) leftH.held  = false;
         if (rightH.held && inputNow - rightH.lastInput > HOLD_RELEASE_MS) rightH.held = false;
         if (downH.held  && inputNow - downH.lastInput  > HOLD_RELEASE_MS) downH.held  = false;
 
-        /* gravity */
         uint64_t now = nowMs();
         if (!state.isGameOver && !didLock && now - lastGravity >= GRAVITY_MS) {
             lastGravity = now;
             if (moveDown(&state)) actedSuccessfully = true;
         }
 
-        /* grounded 상태 갱신 */
         if (!state.isGameOver && !didLock) {
             bool canDown = !checkCollision(&state,
                                            state.activeBlock.x,
                                            state.activeBlock.y + 1,
                                            state.activeBlock.rotation);
+            uint32_t effLockDelay = LOCK_DELAY_MS + (uint32_t)augInv.lockDelayBonus;
             if (canDown) {
                 grounded = false;
             } else {
@@ -316,37 +324,30 @@ int main(int argc, char** argv)
                     resetsLeft--;
                     groundedSince = now;
                 }
-                if (now - groundedSince >= LOCK_DELAY_MS) {
-                    didLock = true;
-                }
+                if (now - groundedSince >= effLockDelay) didLock = true;
             }
         }
 
-        /* lock 처리 */
         if (didLock && !state.isGameOver) {
             TSpinType tspin = detectTSpin(&state);
             int lines = lockBlock(&state);
             bool pc = (lines > 0) && isBoardEmpty(&state);
 
             bool b2bBefore = (state.b2b > 0);
-            bool difficult = (lines == 4) ||
-                             (tspin != TSPIN_NONE && lines > 0);
+            bool difficult = (lines == 4) || (tspin != TSPIN_NONE && lines > 0);
 
-            uint16_t newCombo;
-            if (lines == 0) newCombo = 0;
-            else            newCombo = state.combo + 1;
+            uint16_t newCombo = (lines == 0) ? 0 : (state.combo + 1);
 
-            uint8_t attack = computeAttack(lines, tspin, pc, b2bBefore, newCombo);
-            uint32_t scoreAdd = computeScore(lines, tspin, pc, b2bBefore, difficult, newCombo);
+            uint8_t attack = computeAttack(lines, tspin, pc, b2bBefore, newCombo, &augInv);
+            uint32_t scoreAdd = computeScore(lines, tspin, pc, b2bBefore, difficult, newCombo, &augInv);
+            scoreAdd += (uint32_t)augInv.luckyBonusScore;
 
             state.score      += scoreAdd;
             state.totalLines += (uint32_t)lines;
             state.combo       = newCombo;
-            if (lines > 0) {
-                state.b2b = difficult ? (uint8_t)(state.b2b + 1) : 0;
-            }
+            if (lines > 0) state.b2b = difficult ? (uint8_t)(state.b2b + 1) : 0;
 
-            /* garbage 큐 상쇄 */
+            /* garbage cancellation (송신측) */
             uint8_t toSend = attack;
             if (state.pendingGarbage > 0 && toSend > 0) {
                 uint8_t cancel = (toSend < state.pendingGarbage) ? toSend : state.pendingGarbage;
@@ -354,32 +355,58 @@ int main(int argc, char** argv)
                 toSend = (uint8_t)(toSend - cancel);
             }
 
-            if (net.mode != NET_MODE_NONE) {
-                netSendLock(&net, &state, toSend);
-            }
+            if (net.mode != NET_MODE_NONE) netSendLock(&net, &state, toSend);
 
             spawnBlock(&state);
             grounded = false;
-            resetsLeft = MAX_LOCK_RESETS;
+            resetsLeft = MAX_LOCK_RESETS + augInv.lockResetBonus;
             lastGravity = nowMs();
-
-            /* 새 피스에는 이전 hold 상태 이월 안 함 — 직접 누른 키만 인정 */
             leftH.held = rightH.held = downH.held = false;
+
+            /* XP */
+            int xpRaw = computeXp(lines, tspin, pc, newCombo);
+            if (xpRaw > 0) levelGainXp(&L, xpRaw, augInv.xpPct);
         }
 
-        /* 활성 블록 동기화 */
         if (net.mode != NET_MODE_NONE && net.connected && !state.isGameOver) {
             netSendState(&net, &state.activeBlock);
         }
 
-        /* 상대 폴링 */
         if (net.mode != NET_MODE_NONE) {
             netPoll(&net, &state);
+
+            /* Shield 적용 후 pendingGarbage로 이동 */
+            if (net.incomingGarbageBuf > 0) {
+                uint8_t inc = net.incomingGarbageBuf;
+                uint8_t absorbed = (augInv.shieldCharges < inc)
+                                   ? (uint8_t)augInv.shieldCharges : inc;
+                augInv.shieldCharges -= absorbed;
+                uint8_t remaining = (uint8_t)(inc - absorbed);
+                uint16_t total = (uint16_t)state.pendingGarbage + remaining;
+                if (total > 20) total = 20;
+                state.pendingGarbage = (uint8_t)total;
+                net.incomingGarbageBuf = 0;
+            }
+
             if (net.opponentLost) break;
             if (!net.connected) break;
         }
 
-        uiRender(&state, (net.mode == NET_MODE_NONE) ? NULL : &net);
+        /* 카드 모달 (보류된 게 있으면 하나씩 처리) */
+        while (L.pendingCards > 0 && !state.isGameOver) {
+            CardOffer offer;
+            cardOfferGenerate(&offer);
+            int picked = uiCardSelectModal(&state, (net.mode == NET_MODE_NONE) ? NULL : &net,
+                                           &augInv, &L, &offer);
+            if (picked < 0) { state.isGameOver = true; break; }
+            augInventoryAdd(&augInv, offer.offers[picked]);
+            L.pendingCards--;
+            lastGravity = nowMs();
+            grounded = false;
+            leftH.held = rightH.held = downH.held = false;
+        }
+
+        uiRender(&state, (net.mode == NET_MODE_NONE) ? NULL : &net, &augInv, &L);
 
         msleep(TICK_MS);
     }
@@ -390,7 +417,7 @@ int main(int argc, char** argv)
         sentOver = true;
     }
 
-    uiRender(&state, (net.mode == NET_MODE_NONE) ? NULL : &net);
+    uiRender(&state, (net.mode == NET_MODE_NONE) ? NULL : &net, &augInv, &L);
 
     const char* endMsg;
     if (net.mode == NET_MODE_NONE) {
