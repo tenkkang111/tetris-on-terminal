@@ -87,7 +87,7 @@ bool uiIsScreenSizeOk(bool isMultiplayer)
     return (COLS >= minCols && LINES >= minRows);
 }
 
-void uiDrawPauseOverlay(bool isMultiplayer)
+void uiDrawPauseOverlay(bool isMultiplayer, int secondsLeft)
 {
     int minCols = isMultiplayer ? MIN_COLS_MULTI : MIN_COLS_SINGLE;
     int minRows = isMultiplayer ? MIN_ROWS_MULTI : MIN_ROWS_SINGLE;
@@ -159,7 +159,7 @@ void uiDrawPauseOverlay(bool isMultiplayer)
 
     /* Center Box */
     int boxW = 34;
-    int boxH = 7;
+    int boxH = (isMultiplayer && secondsLeft >= 0) ? 9 : 7;
     int boxX = (COLS - boxW) / 2;
     int boxY = (LINES - boxH) / 2;
     if (boxX < 1) boxX = 1;
@@ -171,6 +171,12 @@ void uiDrawPauseOverlay(bool isMultiplayer)
         if (gColors) attron(COLOR_PAIR(4) | A_BOLD);
         mvprintw(LINES / 2, 1, "RESIZE!");
         if (gColors) attroff(COLOR_PAIR(4) | A_BOLD);
+        /* 화면이 매우 작아도 카운트다운은 표시 */
+        if (isMultiplayer && secondsLeft >= 0) {
+            char timeBuf[24];
+            snprintf(timeBuf, sizeof(timeBuf), "Auto-loss: %ds", secondsLeft);
+            mvprintw(LINES / 2 + 1, 1, "%s", timeBuf);
+        }
         refresh();
         return;
     }
@@ -215,6 +221,83 @@ void uiDrawPauseOverlay(bool isMultiplayer)
     if (gColors) attron(A_DIM);
     mvprintw(row, hintX, "%s", hint);
     if (gColors) attroff(A_DIM);
+
+    /* Countdown (멀티플레이어 전용) */
+    if (isMultiplayer && secondsLeft >= 0) {
+        row += 2;
+        char timeBuf[32];
+        snprintf(timeBuf, sizeof(timeBuf), "Auto-loss in %d sec", secondsLeft);
+        int timeX = boxX + (boxW - (int)strlen(timeBuf)) / 2;
+        if (timeX < boxX + 1) timeX = boxX + 1;
+        if (gColors) attron(COLOR_PAIR(4) | A_BOLD);
+        mvprintw(row, timeX, "%s", timeBuf);
+        if (gColors) attroff(COLOR_PAIR(4) | A_BOLD);
+    }
+
+    refresh();
+}
+
+void uiDrawOpponentPauseOverlay(int secondsLeft)
+{
+    erase();
+
+    int boxW = 40;
+    int boxH = 9;
+    int boxX = (COLS - boxW) / 2;
+    int boxY = (LINES - boxH) / 2;
+    if (boxX < 0) boxX = 0;
+    if (boxY < 0) boxY = 0;
+
+    /* Box background */
+    for (int y = boxY; y < boxY + boxH && y < LINES; y++) {
+        for (int x = boxX; x < boxX + boxW && x < COLS; x++) {
+            mvaddch(y, x, ' ');
+        }
+    }
+
+    /* Box border */
+    if (gColors) attron(COLOR_PAIR(5) | A_BOLD);
+    for (int x = boxX; x < boxX + boxW && x < COLS; x++) {
+        mvaddch(boxY, x, ACS_HLINE);
+        if (boxY + boxH - 1 < LINES) mvaddch(boxY + boxH - 1, x, ACS_HLINE);
+    }
+    for (int y = boxY; y < boxY + boxH && y < LINES; y++) {
+        mvaddch(y, boxX, ACS_VLINE);
+        if (boxX + boxW - 1 < COLS) mvaddch(y, boxX + boxW - 1, ACS_VLINE);
+    }
+    mvaddch(boxY, boxX, ACS_ULCORNER);
+    if (boxX + boxW - 1 < COLS) mvaddch(boxY, boxX + boxW - 1, ACS_URCORNER);
+    if (boxY + boxH - 1 < LINES) mvaddch(boxY + boxH - 1, boxX, ACS_LLCORNER);
+    if (boxX + boxW - 1 < COLS && boxY + boxH - 1 < LINES)
+        mvaddch(boxY + boxH - 1, boxX + boxW - 1, ACS_LRCORNER);
+    if (gColors) attroff(COLOR_PAIR(5) | A_BOLD);
+
+    /* Title */
+    int row = boxY + 2;
+    const char* title = "OPPONENT PAUSED";
+    int titleX = boxX + (boxW - (int)strlen(title)) / 2;
+    if (gColors) attron(COLOR_PAIR(5) | A_BOLD);
+    mvprintw(row, titleX, "%s", title);
+    if (gColors) attroff(COLOR_PAIR(5) | A_BOLD);
+
+    /* Subtitle */
+    row += 2;
+    const char* sub = "Waiting for opponent to resize...";
+    int subX = boxX + (boxW - (int)strlen(sub)) / 2;
+    if (gColors) attron(A_DIM);
+    mvprintw(row, subX, "%s", sub);
+    if (gColors) attroff(A_DIM);
+
+    /* Countdown */
+    if (secondsLeft >= 0) {
+        row += 2;
+        char timeBuf[32];
+        snprintf(timeBuf, sizeof(timeBuf), "Auto-win in %d sec", secondsLeft);
+        int timeX = boxX + (boxW - (int)strlen(timeBuf)) / 2;
+        if (gColors) attron(COLOR_PAIR(4) | A_BOLD);
+        mvprintw(row, timeX, "%s", timeBuf);
+        if (gColors) attroff(COLOR_PAIR(4) | A_BOLD);
+    }
 
     refresh();
 }

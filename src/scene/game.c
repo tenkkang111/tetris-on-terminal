@@ -218,12 +218,107 @@ SceneType sceneGame(SceneContext* ctx)
     CurrentBlock lastSentBlock = {0};
 
     bool wasPaused = false;
+    bool wasSendingPause = false;
+    uint64_t myPauseStartedAt = 0;
+
+    /* 게임 시작 시 화면이 작으면 즉시 PAUSE 전송 */
+    if (net && net->connected && !uiIsScreenSizeOk(true)) {
+        netSendPause(net, true);
+        wasSendingPause = true;
+        myPauseStartedAt = nowMs();
+    }
+
+    /* 게임 시작 전 상대의 PAUSE 상태를 먼저 확인 (동기화 대기) */
+    if (net && net->connected) {
+        /* 잠시 대기 후 상대 메시지 폴링 (상대가 PAUSE를 먼저 보냈을 수 있음) */
+        msleep(100);
+        netPoll(net, &state);
+
+        /* 상대가 이미 일시정지 상태라면 대기 화면 표시 */
+        while (net->connected && net->opponentPaused) {
+            uint64_t elapsed = nowMs() - net->opponentPausedAt;
+            int64_t remaining = (int64_t)NET_PAUSE_TIMEOUT_MS - (int64_t)elapsed;
+            if (remaining <= 0) {
+                net->opponentLost = true;
+                break;
+            }
+            int pauseSecondsLeft = (int)((remaining + 999) / 1000);
+            uiDrawOpponentPauseOverlay(pauseSecondsLeft);
+
+            netPoll(net, &state);
+            if (net->opponentLost || !net->connected) break;
+            msleep(TICK_MS);
+        }
+
+        if (net->opponentLost || !net->connected) {
+            ctx->result.isSinglePlayer = false;
+            ctx->result.myScore = state.score;
+            ctx->result.myLines = state.totalLines;
+            ctx->result.myLevel = 1;
+            ctx->result.isWin = net->opponentLost;
+            ctx->result.isDisconnect = !net->connected && !net->opponentLost;
+            ctx->result.oppScore = net->opponentScore;
+            ctx->result.oppLines = net->opponentTotalLines;
+            netClose(net);
+            return SCENE_RESULT;
+        }
+    }
 
     while (!state.isGameOver) {
-        /* Screen Size Check */
+        /* Screen Size Check (내 화면) */
         bool isMulti = (net != NULL);
-        if (!uiIsScreenSizeOk(isMulti)) {
-            uiDrawPauseOverlay(isMulti);
+        bool myScreenTooSmall = !uiIsScreenSizeOk(isMulti);
+
+        /* 일시정지 상태 송신 (변경 시에만) */
+        if (net && net->connected) {
+            if (myScreenTooSmall && !wasSendingPause) {
+                netSendPause(net, true);
+                wasSendingPause = true;
+                myPauseStartedAt = nowMs();
+            } else if (!myScreenTooSmall && wasSendingPause) {
+                netSendPause(net, false);
+                wasSendingPause = false;
+                myPauseStartedAt = 0;
+            }
+        }
+
+        /* 일시정지 필요 여부 (내가 또는 상대가 일시정지 중) */
+        bool needPause = myScreenTooSmall;
+        int pauseSecondsLeft = -1;
+        int myPauseSecondsLeft = -1;
+
+        /* 내 일시정지 타임아웃 체크 */
+        if (net && myScreenTooSmall && myPauseStartedAt > 0) {
+            uint64_t elapsed = nowMs() - myPauseStartedAt;
+            int64_t remaining = (int64_t)NET_PAUSE_TIMEOUT_MS - (int64_t)elapsed;
+            if (remaining <= 0) {
+                /* 타임아웃: 내가 패배 */
+                state.isGameOver = true;
+                break;
+            }
+            myPauseSecondsLeft = (int)((remaining + 999) / 1000);
+        }
+
+        /* 상대 일시정지 타임아웃 체크 */
+        if (net && net->opponentPaused) {
+            needPause = true;
+            uint64_t elapsed = nowMs() - net->opponentPausedAt;
+            int64_t remaining = (int64_t)NET_PAUSE_TIMEOUT_MS - (int64_t)elapsed;
+            if (remaining <= 0) {
+                /* 타임아웃: 상대 패배 처리 */
+                net->opponentLost = true;
+                break;
+            }
+            pauseSecondsLeft = (int)((remaining + 999) / 1000);
+        }
+
+        if (needPause) {
+            if (myScreenTooSmall) {
+                uiDrawPauseOverlay(isMulti, myPauseSecondsLeft);
+            } else if (net && net->opponentPaused) {
+                /* 상대 일시정지 대기 화면 */
+                uiDrawOpponentPauseOverlay(pauseSecondsLeft);
+            }
             wasPaused = true;
 
             if (net) {
@@ -359,7 +454,15 @@ SceneType sceneGame(SceneContext* ctx)
 
             if (net) netSendLock(net, &state, toSend);
 
+            /* 가비지 적용 여부 확인 (spawnBlock 내에서 적용됨) */
+            uint8_t garbageBefore = state.pendingGarbage;
             spawnBlock(&state);
+
+            /* 가비지가 적용되었으면 보드 상태 즉시 동기화 */
+            if (net && garbageBefore > 0 && state.pendingGarbage == 0) {
+                netSendBoardUpdate(net, &state);
+            }
+
             grounded = false;
             resetsLeft = MAX_LOCK_RESETS + augInv.lockResetBonus;
             lastGravity = nowMs();

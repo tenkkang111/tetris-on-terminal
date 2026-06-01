@@ -12,7 +12,7 @@ static const AugmentDef DEFS[AUG_COUNT] = {
     [AUG_AEGIS]        = { "Aegis",         {0,   1,   3,    6,   12} },
     [AUG_IRON_GRIP]    = { "Iron Grip",     {0,   5,  10,   20,   40} },
     [AUG_REFLEXES]     = { "Reflexes",      {0, 200, 500, 1000, 2000} },
-    [AUG_BAG_VISION]   = { "Bag Vision",    {0,   1,   2,    3,    5} },
+    [AUG_BAG_VISION]   = { "Bag Vision",    {0,   1,   1,    2,    2} },
     [AUG_SCHOLAR]      = { "Scholar",       {0,  15,  30,   50,  100} },
     [AUG_LUCKY_STAR]   = { "Lucky Star",    {0, 100, 300,  700, 1500} },
 };

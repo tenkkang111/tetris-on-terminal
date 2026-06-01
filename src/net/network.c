@@ -6,17 +6,20 @@
 #include <netinet/tcp.h>
 #include <arpa/inet.h>
 #include <unistd.h>
+#include <fcntl.h>
 #include <string.h>
 #include <errno.h>
 #include <time.h>
 #include <stdlib.h>
 #include <stdio.h>
 
-#define MSG_HELLO 0x01
-#define MSG_LOCK  0x02
-#define MSG_OVER  0x03
-#define MSG_STATE 0x04
-#define MSG_HOLD  0x05
+#define MSG_HELLO  0x01
+#define MSG_LOCK   0x02
+#define MSG_OVER   0x03
+#define MSG_STATE  0x04
+#define MSG_HOLD   0x05
+#define MSG_PAUSE  0x06
+#define MSG_BOARD  0x07
 
 #define BOARD_BYTES 200u
 /* type + garbage + score(4) + board(200) + hold + pendingG + b2b + combo(2)
@@ -217,6 +220,39 @@ int netSendGameOver(NetContext* ctx)
     return 0;
 }
 
+int netSendPause(NetContext* ctx, bool paused)
+{
+    if (!ctx->connected) return 0;
+    uint8_t buf[2];
+    buf[0] = MSG_PAUSE;
+    buf[1] = paused ? 1 : 0;
+    if (sendAll(ctx->sock, buf, sizeof(buf)) < 0) {
+        ctx->connected = false;
+        return -1;
+    }
+    ctx->myPaused = paused;
+    return 0;
+}
+
+int netSendBoardUpdate(NetContext* ctx, const GameState* state)
+{
+    if (!ctx->connected) return 0;
+
+    /* type(1) + board(200) + score(4) + pendingGarbage(1) = 206 bytes */
+    uint8_t buf[1 + BOARD_BYTES + 4 + 1];
+    size_t p = 0;
+    buf[p++] = MSG_BOARD;
+    memcpy(buf + p, state->board, BOARD_BYTES); p += BOARD_BYTES;
+    writeU32LE(buf + p, state->score); p += 4;
+    buf[p++] = state->pendingGarbage;
+
+    if (sendAll(ctx->sock, buf, sizeof(buf)) < 0) {
+        ctx->connected = false;
+        return -1;
+    }
+    return 0;
+}
+
 int netSendState(NetContext* ctx, const CurrentBlock* active)
 {
     if (!ctx->connected) return 0;
@@ -325,6 +361,39 @@ int netPoll(NetContext* ctx, GameState* myState)
             continue;
         }
 
+        if (header == MSG_PAUSE) {
+            uint8_t paused;
+            if (recvAll(ctx->sock, &paused, 1) < 0) {
+                ctx->connected = false;
+                return -1;
+            }
+            ctx->opponentPaused = (paused != 0);
+            if (ctx->opponentPaused) {
+                /* 일시정지 시작 시간 기록 */
+                struct timespec ts;
+                clock_gettime(CLOCK_MONOTONIC, &ts);
+                ctx->opponentPausedAt = (uint64_t)ts.tv_sec * 1000ULL +
+                                        (uint64_t)ts.tv_nsec / 1000000ULL;
+            }
+            handled++;
+            continue;
+        }
+
+        if (header == MSG_BOARD) {
+            /* board(200) + score(4) + pendingGarbage(1) = 205 bytes */
+            uint8_t rest[BOARD_BYTES + 4 + 1];
+            if (recvAll(ctx->sock, rest, sizeof(rest)) < 0) {
+                ctx->connected = false;
+                return -1;
+            }
+            size_t p = 0;
+            memcpy(ctx->opponentBoard, rest + p, BOARD_BYTES); p += BOARD_BYTES;
+            ctx->opponentScore = readU32LE(rest + p); p += 4;
+            ctx->opponentPendingGarbage = rest[p++];
+            handled++;
+            continue;
+        }
+
         /* 알 수 없는 메시지: 연결 종료 */
         ctx->connected = false;
         return -1;
@@ -340,4 +409,296 @@ void netClose(NetContext* ctx)
     }
     ctx->connected = false;
     ctx->sock = -1;
+}
+
+/* ============================================================================
+ *  LAN 검색 (UDP 브로드캐스트)
+ * ============================================================================ */
+
+#include <ifaddrs.h>
+#include <net/if.h>
+
+int netBroadcastCreate(void)
+{
+    int sock = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sock < 0) return -1;
+
+    int yes = 1;
+    setsockopt(sock, SOL_SOCKET, SO_BROADCAST, &yes, sizeof(yes));
+    setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
+
+    return sock;
+}
+
+int netBroadcastSend(int bcSock, uint16_t gamePort, const char* roomName, bool hasPassword)
+{
+    if (bcSock < 0) return -1;
+
+    /* 패킷 포맷: "TETRIS1:포트:비밀번호유무:방이름" */
+    char buf[96];
+    int len = snprintf(buf, sizeof(buf), "%s:%u:%d:%s",
+                       NET_BROADCAST_MAGIC, (unsigned)gamePort,
+                       hasPassword ? 1 : 0,
+                       roomName ? roomName : "");
+
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(NET_BROADCAST_PORT);
+    addr.sin_addr.s_addr = htonl(INADDR_BROADCAST);
+
+    ssize_t sent = sendto(bcSock, buf, (size_t)len, 0,
+                          (struct sockaddr*)&addr, sizeof(addr));
+    return (sent > 0) ? 0 : -1;
+}
+
+void netBroadcastClose(int bcSock)
+{
+    if (bcSock >= 0) close(bcSock);
+}
+
+static uint64_t nowMsNet(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000ULL + (uint64_t)ts.tv_nsec / 1000000ULL;
+}
+
+int netDiscoverHosts(HostList* list, int timeoutMs)
+{
+    memset(list, 0, sizeof(*list));
+
+    int sock = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sock < 0) return 0;
+
+    int yes = 1;
+    setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
+
+    struct sockaddr_in bindAddr;
+    memset(&bindAddr, 0, sizeof(bindAddr));
+    bindAddr.sin_family = AF_INET;
+    bindAddr.sin_port = htons(NET_BROADCAST_PORT);
+    bindAddr.sin_addr.s_addr = htonl(INADDR_ANY);
+
+    if (bind(sock, (struct sockaddr*)&bindAddr, sizeof(bindAddr)) < 0) {
+        close(sock);
+        return 0;
+    }
+
+    /* 논블로킹 설정 */
+    int flags = fcntl(sock, F_GETFL, 0);
+    fcntl(sock, F_SETFL, flags | O_NONBLOCK);
+
+    uint64_t start = nowMsNet();
+    uint64_t deadline = start + (uint64_t)timeoutMs;
+
+    while (nowMsNet() < deadline) {
+        fd_set rfds;
+        FD_ZERO(&rfds);
+        FD_SET(sock, &rfds);
+
+        struct timeval tv;
+        uint64_t remaining = deadline - nowMsNet();
+        if (remaining > 100) remaining = 100;  /* 100ms 단위로 체크 */
+        tv.tv_sec = 0;
+        tv.tv_usec = (long)(remaining * 1000);
+
+        int r = select(sock + 1, &rfds, NULL, NULL, &tv);
+        if (r <= 0) continue;
+
+        char buf[128];
+        struct sockaddr_in srcAddr;
+        socklen_t srcLen = sizeof(srcAddr);
+        ssize_t n = recvfrom(sock, buf, sizeof(buf) - 1, 0,
+                             (struct sockaddr*)&srcAddr, &srcLen);
+        if (n <= 0) continue;
+        buf[n] = '\0';
+
+        /* 패킷 검증: "TETRIS1:포트:비밀번호유무:방이름" */
+        if (strncmp(buf, NET_BROADCAST_MAGIC ":", 8) != 0) continue;
+
+        /* 포트 파싱 */
+        char* portStr = buf + 8;
+        char* colon1 = strchr(portStr, ':');
+        uint16_t port;
+        bool hasPassword = false;
+        char roomName[32] = "";
+
+        if (colon1 == NULL) {
+            /* 이전 포맷: "TETRIS1:포트" (하위 호환) */
+            port = (uint16_t)atoi(portStr);
+        } else {
+            /* 새 포맷: "TETRIS1:포트:비밀번호유무:방이름" */
+            *colon1 = '\0';
+            port = (uint16_t)atoi(portStr);
+
+            char* pwStr = colon1 + 1;
+            char* colon2 = strchr(pwStr, ':');
+            if (colon2) {
+                *colon2 = '\0';
+                hasPassword = (atoi(pwStr) != 0);
+                char* nameStr = colon2 + 1;
+                strncpy(roomName, nameStr, sizeof(roomName) - 1);
+                roomName[sizeof(roomName) - 1] = '\0';
+            }
+        }
+
+        if (port == 0) continue;
+
+        char ip[16];
+        inet_ntop(AF_INET, &srcAddr.sin_addr, ip, sizeof(ip));
+
+        /* 중복 체크 */
+        bool found = false;
+        for (int i = 0; i < list->count; i++) {
+            if (strcmp(list->hosts[i].ip, ip) == 0 && list->hosts[i].port == port) {
+                list->hosts[i].lastSeen = nowMsNet();
+                /* 방 정보도 업데이트 */
+                list->hosts[i].hasPassword = hasPassword;
+                strncpy(list->hosts[i].roomName, roomName, sizeof(list->hosts[i].roomName) - 1);
+                found = true;
+                break;
+            }
+        }
+
+        if (!found && list->count < NET_MAX_HOSTS) {
+            strncpy(list->hosts[list->count].ip, ip, 15);
+            list->hosts[list->count].ip[15] = '\0';
+            list->hosts[list->count].port = port;
+            list->hosts[list->count].hasPassword = hasPassword;
+            strncpy(list->hosts[list->count].roomName, roomName, sizeof(list->hosts[list->count].roomName) - 1);
+            list->hosts[list->count].roomName[sizeof(list->hosts[list->count].roomName) - 1] = '\0';
+            list->hosts[list->count].lastSeen = nowMsNet();
+            list->count++;
+        }
+    }
+
+    close(sock);
+    return list->count;
+}
+
+int netGetLocalIP(char* out)
+{
+    struct ifaddrs *ifaddr, *ifa;
+    if (getifaddrs(&ifaddr) == -1) return -1;
+
+    int found = 0;
+    for (ifa = ifaddr; ifa != NULL; ifa = ifa->ifa_next) {
+        if (ifa->ifa_addr == NULL) continue;
+        if (ifa->ifa_addr->sa_family != AF_INET) continue;
+
+        /* loopback 제외 */
+        if (ifa->ifa_flags & IFF_LOOPBACK) continue;
+        /* 활성화된 인터페이스만 */
+        if (!(ifa->ifa_flags & IFF_UP)) continue;
+
+        struct sockaddr_in *addr = (struct sockaddr_in*)ifa->ifa_addr;
+        inet_ntop(AF_INET, &addr->sin_addr, out, 16);
+
+        /* 127.x.x.x 제외 */
+        if (strncmp(out, "127.", 4) != 0) {
+            found = 1;
+            break;
+        }
+    }
+
+    freeifaddrs(ifaddr);
+    return found ? 0 : -1;
+}
+
+#define MSG_PASSWORD 0x08
+#define MSG_PASSWORD_OK 0x09
+#define MSG_PASSWORD_FAIL 0x0A
+
+int netSendPassword(NetContext* ctx, const char* password)
+{
+    if (!ctx->connected) return -1;
+
+    /* 패킷: type(1) + len(1) + password(최대 31자) */
+    uint8_t buf[33];
+    size_t pwLen = password ? strlen(password) : 0;
+    if (pwLen > 31) pwLen = 31;
+
+    buf[0] = MSG_PASSWORD;
+    buf[1] = (uint8_t)pwLen;
+    if (pwLen > 0) memcpy(buf + 2, password, pwLen);
+
+    if (sendAll(ctx->sock, buf, 2 + pwLen) < 0) {
+        ctx->connected = false;
+        return -1;
+    }
+    return 0;
+}
+
+int netReceiveAndVerifyPassword(NetContext* ctx, const char* expectedPassword)
+{
+    if (!ctx->connected) return -1;
+
+    /* 비밀번호가 없으면 바로 OK */
+    if (expectedPassword == NULL || expectedPassword[0] == '\0') {
+        uint8_t ok = MSG_PASSWORD_OK;
+        if (sendAll(ctx->sock, &ok, 1) < 0) {
+            ctx->connected = false;
+            return -1;
+        }
+        return 1;
+    }
+
+    /* 비밀번호 메시지 수신 */
+    uint8_t header[2];
+    if (recvAll(ctx->sock, header, 2) < 0) {
+        ctx->connected = false;
+        return -1;
+    }
+
+    if (header[0] != MSG_PASSWORD) {
+        ctx->connected = false;
+        return -1;
+    }
+
+    uint8_t pwLen = header[1];
+    if (pwLen > 31) {
+        ctx->connected = false;
+        return -1;
+    }
+
+    char recvPassword[32] = "";
+    if (pwLen > 0) {
+        if (recvAll(ctx->sock, recvPassword, pwLen) < 0) {
+            ctx->connected = false;
+            return -1;
+        }
+    }
+    recvPassword[pwLen] = '\0';
+
+    /* 비밀번호 비교 */
+    if (strcmp(recvPassword, expectedPassword) == 0) {
+        uint8_t ok = MSG_PASSWORD_OK;
+        if (sendAll(ctx->sock, &ok, 1) < 0) {
+            ctx->connected = false;
+            return -1;
+        }
+        return 1;
+    } else {
+        uint8_t fail = MSG_PASSWORD_FAIL;
+        sendAll(ctx->sock, &fail, 1);
+        return 0;
+    }
+}
+
+int netReceivePasswordResult(NetContext* ctx)
+{
+    if (!ctx->connected) return -1;
+
+    uint8_t result;
+    if (recvAll(ctx->sock, &result, 1) < 0) {
+        ctx->connected = false;
+        return -1;
+    }
+
+    if (result == MSG_PASSWORD_OK) return 1;
+    if (result == MSG_PASSWORD_FAIL) return 0;
+
+    ctx->connected = false;
+    return -1;
 }

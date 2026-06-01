@@ -42,6 +42,9 @@ typedef struct {
     NetMode netMode;
     char hostIp[64];
     uint16_t port;
+    char roomName[32];
+    char password[32];
+    bool cliMode;  /* CLI에서 직접 시작 시 true */
 
     /* 네트워크 컨텍스트 (매칭 -> 게임 전달) */
     NetContext net;

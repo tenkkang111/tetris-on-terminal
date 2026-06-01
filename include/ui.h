@@ -38,8 +38,15 @@ bool uiIsScreenSizeOk(bool isMultiplayer);
 /**
  * @brief 일시정지 오버레이 표시 (화면 크기 부족 시).
  * @param isMultiplayer 멀티플레이어 모드 여부
+ * @param secondsLeft 게임 종료까지 남은 초 (-1이면 표시 안 함, 멀티플레이어 전용)
  */
-void uiDrawPauseOverlay(bool isMultiplayer);
+void uiDrawPauseOverlay(bool isMultiplayer, int secondsLeft);
+
+/**
+ * @brief 상대 일시정지 대기 오버레이 표시.
+ * @param secondsLeft 게임 종료까지 남은 초 (-1이면 표시 안 함)
+ */
+void uiDrawOpponentPauseOverlay(int secondsLeft);
 
 UiKey uiPollKey(void);
 

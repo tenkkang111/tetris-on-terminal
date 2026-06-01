@@ -3,11 +3,32 @@
 
 #include "common.h"
 
+#define NET_BROADCAST_PORT 5556
+#define NET_BROADCAST_MAGIC "TETRIS1"
+#define NET_MAX_HOSTS 8
+
 typedef enum {
     NET_MODE_NONE = 0,
     NET_MODE_HOST,
     NET_MODE_CLIENT
 } NetMode;
+
+/* LAN 검색용 호스트 정보 */
+typedef struct {
+    char ip[16];
+    uint16_t port;
+    char roomName[32];
+    bool hasPassword;
+    uint64_t lastSeen;   /* ms timestamp */
+} DiscoveredHost;
+
+typedef struct {
+    DiscoveredHost hosts[NET_MAX_HOSTS];
+    int count;
+} HostList;
+
+/* 일시정지 타임아웃 (밀리초) */
+#define NET_PAUSE_TIMEOUT_MS 60000
 
 typedef struct {
     NetMode mode;
@@ -34,6 +55,11 @@ typedef struct {
 
     /* 수신 가비지 스테이징 — main에서 shield 처리 후 state.pendingGarbage로 이동 */
     uint8_t   incomingGarbageBuf;
+
+    /* 일시정지 동기화 */
+    bool      myPaused;           /* 내가 일시정지 중 */
+    bool      opponentPaused;     /* 상대가 일시정지 중 */
+    uint64_t  opponentPausedAt;   /* 상대 일시정지 시작 시간 (ms) */
 } NetContext;
 
 /**
@@ -75,11 +101,80 @@ int netSendState(NetContext* ctx, const CurrentBlock* active);
 int netSendGameOver(NetContext* ctx);
 
 /**
+ * @brief 일시정지 상태 변경 알림.
+ * @param paused true=일시정지 시작, false=재개
+ */
+int netSendPause(NetContext* ctx, bool paused);
+
+/**
+ * @brief 보드 상태만 즉시 전송 (가비지 적용 후 동기화용).
+ */
+int netSendBoardUpdate(NetContext* ctx, const GameState* state);
+
+/**
  * @brief 비차단 폴링. 수신된 LOCK 메시지의 garbage는 myState->pendingGarbage에 누적.
  * @return 1 메시지 처리됨, 0 없음, -1 연결 끊김.
  */
 int netPoll(NetContext* ctx, GameState* myState);
 
 void netClose(NetContext* ctx);
+
+/* ============================================================================
+ *  LAN 검색 (UDP 브로드캐스트)
+ * ============================================================================ */
+
+/**
+ * @brief 브로드캐스트 소켓 생성 (호스트용).
+ * @return 소켓 fd, 실패 시 -1.
+ */
+int netBroadcastCreate(void);
+
+/**
+ * @brief 호스트 광고 패킷 송신.
+ * @param bcSock netBroadcastCreate()로 생성한 소켓
+ * @param gamePort 게임 TCP 포트
+ * @param roomName 방 이름 (최대 31자)
+ * @param hasPassword 비밀번호 유무
+ */
+int netBroadcastSend(int bcSock, uint16_t gamePort, const char* roomName, bool hasPassword);
+
+/**
+ * @brief 브로드캐스트 소켓 닫기.
+ */
+void netBroadcastClose(int bcSock);
+
+/**
+ * @brief LAN 호스트 검색 (클라이언트용). timeoutMs 동안 수신.
+ * @param list 발견된 호스트 목록 (out)
+ * @param timeoutMs 검색 시간 (밀리초)
+ * @return 발견된 호스트 수
+ */
+int netDiscoverHosts(HostList* list, int timeoutMs);
+
+/**
+ * @brief 호스트의 로컬 IP 주소 가져오기 (표시용).
+ * @param out 결과 버퍼 (최소 16바이트)
+ * @return 0 성공, -1 실패
+ */
+int netGetLocalIP(char* out);
+
+/**
+ * @brief 비밀번호 전송 (클라이언트 -> 호스트).
+ */
+int netSendPassword(NetContext* ctx, const char* password);
+
+/**
+ * @brief 비밀번호 수신 및 확인 (호스트).
+ * @param ctx 네트워크 컨텍스트
+ * @param expectedPassword 예상 비밀번호 (빈 문자열이면 비밀번호 없음)
+ * @return 1 성공, 0 비밀번호 틀림, -1 연결 오류
+ */
+int netReceiveAndVerifyPassword(NetContext* ctx, const char* expectedPassword);
+
+/**
+ * @brief 비밀번호 검증 결과 수신 (클라이언트).
+ * @return 1 성공, 0 비밀번호 틀림, -1 연결 오류
+ */
+int netReceivePasswordResult(NetContext* ctx);
 
 #endif

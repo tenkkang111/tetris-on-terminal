@@ -19,23 +19,20 @@ static const char* LOGO[] = {
 typedef enum {
     MENU_SINGLE = 0,
     MENU_HOST,
-    MENU_JOIN,
-    MENU_QUIT,
+    MENU_FIND,
     MENU_COUNT
 } MenuItem;
 
 static const char* MENU_LABELS[] = {
     "SOLO",
     "HOST GAME",
-    "JOIN GAME",
-    "QUIT"
+    "FIND GAME"
 };
 
 static const char* MENU_DESC[] = {
     "Play alone with augment system",
-    "Create a room and wait for opponent",
-    "Connect to an existing room",
-    "Exit the game"
+    "Host a room for LAN players",
+    "Search for games on local network"
 };
 
 static void drawMenuBox(int y, int x, int w, int h, bool selected)
@@ -148,11 +145,10 @@ SceneType sceneLobby(SceneContext* ctx)
                     case MENU_HOST:
                         ctx->netMode = NET_MODE_HOST;
                         return SCENE_MATCHING;
-                    case MENU_JOIN:
+                    case MENU_FIND:
                         ctx->netMode = NET_MODE_CLIENT;
+                        ctx->hostIp[0] = '\0';
                         return SCENE_MATCHING;
-                    case MENU_QUIT:
-                        return SCENE_QUIT;
                 }
                 break;
             case 'q':
@@ -166,6 +162,7 @@ SceneType sceneLobby(SceneContext* ctx)
                 return SCENE_MATCHING;
             case '3':
                 ctx->netMode = NET_MODE_CLIENT;
+                ctx->hostIp[0] = '\0';
                 return SCENE_MATCHING;
         }
 
