@@ -46,6 +46,11 @@ typedef struct {
     char password[32];
     bool cliMode;  /* CLI에서 직접 시작 시 true */
 
+    /* 중계 서버 모드 */
+    bool useServer;          /* true = 서버 경유 연결 */
+    char serverIp[64];       /* 서버 IP */
+    uint16_t serverPort;     /* 서버 포트 */
+
     /* 네트워크 컨텍스트 (매칭 -> 게임 전달) */
     NetContext net;
     uint32_t seed;

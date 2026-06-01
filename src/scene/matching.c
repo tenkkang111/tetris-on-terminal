@@ -388,6 +388,131 @@ lan_search_retry:
 }
 
 typedef enum {
+    SRV_FIELD_IP,
+    SRV_FIELD_PORT,
+    SRV_FIELD_ROOM,
+    SRV_FIELD_COUNT
+} ServerInputField;
+
+/* 서버 연결용 입력 화면 (Server IP / Port / Room).
+ * room이 비면 quick match. */
+static bool serverInputScreen(SceneContext* ctx)
+{
+    char ipBuf[INPUT_MAX + 1]   = "";
+    char portBuf[INPUT_MAX + 1] = "5555";
+    char roomBuf[32]            = "";
+    int ipLen   = (int)strlen(ipBuf);
+    int portLen = (int)strlen(portBuf);
+    int roomLen = (int)strlen(roomBuf);
+    int activeField = SRV_FIELD_IP;
+
+    nodelay(stdscr, TRUE);
+    curs_set(1);
+
+    while (1) {
+        erase();
+
+        int centerX = COLS / 2;
+        int boxW = 52;
+        int boxH = 16;
+        int boxX = centerX - boxW / 2;
+        int boxY = LINES / 2 - boxH / 2;
+
+        if (has_colors()) attron(COLOR_PAIR(1));
+        drawBox(boxY, boxX, boxW, boxH, "ONLINE GAME");
+        if (has_colors()) attroff(COLOR_PAIR(1));
+
+        int fieldY = boxY + 2;
+        if (has_colors()) attron(A_DIM);
+        mvprintw(fieldY, boxX + 4, "Connect via relay server.");
+        if (has_colors()) attroff(A_DIM);
+
+        fieldY = boxY + 4;
+        mvprintw(fieldY, boxX + 4, "Server IP:");
+        if (activeField == SRV_FIELD_IP) attron(A_REVERSE);
+        mvprintw(fieldY, boxX + 17, "%-28s", ipBuf);
+        if (activeField == SRV_FIELD_IP) attroff(A_REVERSE);
+
+        fieldY += 2;
+        mvprintw(fieldY, boxX + 4, "Port:");
+        if (activeField == SRV_FIELD_PORT) attron(A_REVERSE);
+        mvprintw(fieldY, boxX + 17, "%-10s", portBuf);
+        if (activeField == SRV_FIELD_PORT) attroff(A_REVERSE);
+
+        fieldY += 2;
+        mvprintw(fieldY, boxX + 4, "Room:");
+        if (activeField == SRV_FIELD_ROOM) attron(A_REVERSE);
+        if (roomLen > 0) {
+            mvprintw(fieldY, boxX + 17, "%-28s", roomBuf);
+        } else {
+            if (has_colors()) attron(A_DIM);
+            mvprintw(fieldY, boxX + 17, "(quick match)               ");
+            if (has_colors()) attroff(A_DIM);
+        }
+        if (activeField == SRV_FIELD_ROOM) attroff(A_REVERSE);
+
+        fieldY += 3;
+        if (has_colors()) attron(A_DIM);
+        mvprintw(fieldY, boxX + 4, "TAB: Switch   ENTER: Connect   ESC: Back");
+        if (has_colors()) attroff(A_DIM);
+
+        if (activeField == SRV_FIELD_IP)        move(boxY + 4,  boxX + 17 + ipLen);
+        else if (activeField == SRV_FIELD_PORT) move(boxY + 6,  boxX + 17 + portLen);
+        else                                     move(boxY + 8,  boxX + 17 + roomLen);
+
+        refresh();
+
+        int ch = getch();
+        if (ch == ERR) { usleep(16000); continue; }
+
+        if (ch == 27) {
+            curs_set(0);
+            return false;
+        }
+
+        if (ch == '\t' || ch == KEY_DOWN) {
+            activeField = (activeField + 1) % SRV_FIELD_COUNT;
+            continue;
+        }
+        if (ch == KEY_UP) {
+            activeField = (activeField - 1 + SRV_FIELD_COUNT) % SRV_FIELD_COUNT;
+            continue;
+        }
+
+        if (ch == '\n' || ch == '\r' || ch == KEY_ENTER) {
+            if (ipLen == 0) continue;   /* IP 필수 */
+            int port = atoi(portBuf);
+            if (port <= 0 || port > 65535) port = DEFAULT_PORT;
+
+            strncpy(ctx->serverIp, ipBuf, sizeof(ctx->serverIp) - 1);
+            ctx->serverIp[sizeof(ctx->serverIp) - 1] = '\0';
+            ctx->serverPort = (uint16_t)port;
+            strncpy(ctx->roomName, roomBuf, sizeof(ctx->roomName) - 1);
+            ctx->roomName[sizeof(ctx->roomName) - 1] = '\0';
+            curs_set(0);
+            return true;
+        }
+
+        char* buf;
+        int*  len;
+        int   maxLen;
+        if (activeField == SRV_FIELD_IP)        { buf = ipBuf;   len = &ipLen;   maxLen = 28; }
+        else if (activeField == SRV_FIELD_PORT) { buf = portBuf; len = &portLen; maxLen = 5;  }
+        else                                     { buf = roomBuf; len = &roomLen; maxLen = 28; }
+
+        if (ch == KEY_BACKSPACE || ch == 127 || ch == '\b') {
+            if (*len > 0) buf[--(*len)] = '\0';
+        } else if (ch >= 32 && ch < 127 && *len < maxLen) {
+            if (activeField == SRV_FIELD_PORT) {
+                if (ch >= '0' && ch <= '9') { buf[(*len)++] = (char)ch; buf[*len] = '\0'; }
+            } else {
+                buf[(*len)++] = (char)ch; buf[*len] = '\0';
+            }
+        }
+    }
+}
+
+typedef enum {
     HOST_FIELD_NAME,
     HOST_FIELD_PORT,
     HOST_FIELD_PASSWORD,
@@ -603,6 +728,76 @@ SceneType sceneMatching(SceneContext* ctx)
     }
     memset(&ctx->net, 0, sizeof(ctx->net));
     ctx->net.sock = -1;
+
+    /* ---- 중계 서버 경유 모드 ---- */
+    if (ctx->useServer) {
+        /* CLI 모드가 아니고 IP가 비어있으면 입력 화면 */
+        if (!ctx->cliMode && ctx->serverIp[0] == '\0') {
+            if (!serverInputScreen(ctx)) {
+                ctx->useServer = false;
+                return SCENE_LOBBY;
+            }
+        }
+
+        nodelay(stdscr, TRUE);
+        curs_set(0);
+
+        char status[160];
+        snprintf(status, sizeof(status), "Connecting to server %s:%u...",
+                 ctx->serverIp, ctx->serverPort);
+        waitingScreen(ctx, status, false, NULL);
+
+        if (netConnectToServer(&ctx->net, ctx->serverIp, ctx->serverPort,
+                               ctx->roomName) != 0) {
+            waitingScreen(ctx, "Failed to reach server", false, NULL);
+            usleep(2000000);
+            return SCENE_LOBBY;
+        }
+
+        /* 매칭 폴링 (ESC로 취소) */
+        const char* waitMsg = (ctx->roomName[0])
+            ? "Waiting for opponent in your room..."
+            : "Waiting for quick match...";
+
+        while (1) {
+            waitingScreen(ctx, waitMsg, false, NULL);
+
+            int ch = getch();
+            if (ch == 27) {
+                netClose(&ctx->net);
+                return SCENE_LOBBY;
+            }
+
+            int r = netCheckMatched(&ctx->net);
+            if (r == 1) break;
+            if (r < 0) {
+                waitingScreen(ctx, "Server closed connection", false, NULL);
+                usleep(2000000);
+                netClose(&ctx->net);
+                return SCENE_LOBBY;
+            }
+            usleep(50000);
+        }
+
+        const char* roleMsg = (ctx->net.mode == NET_MODE_HOST)
+            ? "Matched! You are HOST. Exchanging seed..."
+            : "Matched! You are CLIENT. Receiving seed...";
+        waitingScreen(ctx, roleMsg, false, NULL);
+
+        /* netMode를 매칭 결과에 맞춰 갱신 */
+        ctx->netMode = ctx->net.mode;
+
+        if (netExchangeSeed(&ctx->net) != 0) {
+            netClose(&ctx->net);
+            waitingScreen(ctx, "Seed exchange failed", false, NULL);
+            usleep(2000000);
+            return SCENE_LOBBY;
+        }
+
+        ctx->seed = ctx->net.seed;
+        usleep(400000);
+        return SCENE_GAME;
+    }
 
     if (ctx->netMode == NET_MODE_HOST) {
         /* CLI 모드면 입력 화면 건너뛰기 */

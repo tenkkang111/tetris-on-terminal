@@ -10,7 +10,8 @@ SRC     := src/main.c \
            $(wildcard src/net/*.c) \
            $(wildcard src/ui/*.c) \
            $(wildcard src/augment/*.c) \
-           $(wildcard src/scene/*.c)
+           $(wildcard src/scene/*.c) \
+           $(wildcard src/server/*.c)
 
 # 오브젝트 파일을 build/ 디렉토리에 생성
 OBJ     := $(patsubst src/%.c,$(BUILD_DIR)/%.o,$(SRC))

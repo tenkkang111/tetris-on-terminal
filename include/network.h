@@ -177,4 +177,30 @@ int netReceiveAndVerifyPassword(NetContext* ctx, const char* expectedPassword);
  */
 int netReceivePasswordResult(NetContext* ctx);
 
+/* ============================================================================
+ *  중계 서버 연결 (server-client 모드)
+ *
+ *  netConnectToServer로 서버에 TCP 연결 + HELLO 송신.
+ *  netCheckMatched로 비차단 폴링하여 MATCHED 수신을 확인.
+ *  매칭 후 ctx->mode 가 NET_MODE_HOST 또는 NET_MODE_CLIENT 로 설정되며,
+ *  이후엔 기존 P2P 게임 프로토콜이 그대로 통한다 (서버는 투명 릴레이).
+ * ============================================================================ */
+
+/**
+ * @brief 중계 서버에 연결하고 HELLO 전송.
+ * @param ctx       초기화된 NetContext (zero-init 후 호출 권장)
+ * @param server    서버 IP
+ * @param port      서버 포트
+ * @param roomName  방 이름 (NULL이거나 빈 문자열이면 quick match)
+ * @return 0 on success, -1 on failure.
+ */
+int netConnectToServer(NetContext* ctx, const char* server, uint16_t port,
+                       const char* roomName);
+
+/**
+ * @brief 매칭 결과를 비차단 폴링.
+ * @return 1 매칭 완료(ctx->mode 설정됨), 0 대기 중, -1 오류/거부(FULL 등)
+ */
+int netCheckMatched(NetContext* ctx);
+
 #endif

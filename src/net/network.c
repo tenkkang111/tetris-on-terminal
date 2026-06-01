@@ -702,3 +702,104 @@ int netReceivePasswordResult(NetContext* ctx)
     ctx->connected = false;
     return -1;
 }
+
+/* ============================================================================
+ *  중계 서버 (server-client) 모드
+ * ============================================================================ */
+
+#define SRV_MSG_HELLO_LOCAL   0x10
+#define SRV_MSG_MATCHED_LOCAL 0x18
+#define SRV_MSG_FULL_LOCAL    0x19
+#define SRV_HELLO_BYTES       34
+#define SRV_ROOM_NAME_BYTES   32
+
+int netConnectToServer(NetContext* ctx, const char* server, uint16_t port,
+                       const char* roomName)
+{
+    memset(ctx, 0, sizeof(*ctx));
+    ctx->mode = NET_MODE_NONE;
+    ctx->sock = -1;
+
+    int sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (sock < 0) return -1;
+
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(port);
+    if (inet_pton(AF_INET, server, &addr.sin_addr) != 1) {
+        close(sock);
+        return -1;
+    }
+    if (connect(sock, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+        close(sock);
+        return -1;
+    }
+
+    int one = 1;
+    setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
+
+    uint8_t hello[SRV_HELLO_BYTES];
+    memset(hello, 0, sizeof(hello));
+    hello[0] = SRV_MSG_HELLO_LOCAL;
+    hello[1] = 0x01;  /* protocol version */
+    if (roomName && roomName[0]) {
+        strncpy((char*)(hello + 2), roomName, SRV_ROOM_NAME_BYTES - 1);
+    }
+    if (sendAll(sock, hello, sizeof(hello)) < 0) {
+        close(sock);
+        return -1;
+    }
+
+    ctx->sock = sock;
+    ctx->connected = true;
+    /* mode는 매칭 후에 결정 */
+    return 0;
+}
+
+int netCheckMatched(NetContext* ctx)
+{
+    if (!ctx->connected || ctx->sock < 0) return -1;
+
+    fd_set rfds;
+    FD_ZERO(&rfds);
+    FD_SET(ctx->sock, &rfds);
+    struct timeval tv = {0, 0};
+    int r = select(ctx->sock + 1, &rfds, NULL, NULL, &tv);
+    if (r <= 0) return 0;
+
+    uint8_t hdr[2];
+    ssize_t n = recv(ctx->sock, hdr, 1, MSG_PEEK);
+    if (n <= 0) {
+        ctx->connected = false;
+        return -1;
+    }
+
+    /* FULL은 1바이트 */
+    if (hdr[0] == SRV_MSG_FULL_LOCAL) {
+        (void)recv(ctx->sock, hdr, 1, 0);
+        ctx->connected = false;
+        return -1;
+    }
+    if (hdr[0] != SRV_MSG_MATCHED_LOCAL) {
+        ctx->connected = false;
+        return -1;
+    }
+
+    /* MATCHED는 2바이트 모이길 기다림 */
+    n = recv(ctx->sock, hdr, 2, MSG_PEEK);
+    if (n < 0) {
+        if (errno == EAGAIN || errno == EWOULDBLOCK) return 0;
+        ctx->connected = false;
+        return -1;
+    }
+    if (n < 2) return 0;
+
+    if (recv(ctx->sock, hdr, 2, 0) != 2) {
+        ctx->connected = false;
+        return -1;
+    }
+
+    ctx->mode = (hdr[1] == 0) ? NET_MODE_HOST : NET_MODE_CLIENT;
+    return 1;
+}

@@ -20,19 +20,22 @@ typedef enum {
     MENU_SINGLE = 0,
     MENU_HOST,
     MENU_FIND,
+    MENU_ONLINE,
     MENU_COUNT
 } MenuItem;
 
 static const char* MENU_LABELS[] = {
     "SOLO",
     "HOST GAME",
-    "FIND GAME"
+    "FIND GAME",
+    "ONLINE GAME"
 };
 
 static const char* MENU_DESC[] = {
     "Play alone with augment system",
     "Host a room for LAN players",
-    "Search for games on local network"
+    "Search for games on local network",
+    "Connect via relay server (cross-NAT)"
 };
 
 static void drawMenuBox(int y, int x, int w, int h, bool selected)
@@ -86,8 +89,8 @@ SceneType sceneLobby(SceneContext* ctx)
         mvprintw(startY + 6, centerX - 5, "v1.0.0");
 
         int menuY = startY + 9;
-        int menuW = 30;
-        int menuH = 5;
+        int menuW = 32;
+        int menuH = 4;
         int menuGap = 1;
         int menuStartX = centerX - menuW / 2;
 
@@ -141,13 +144,24 @@ SceneType sceneLobby(SceneContext* ctx)
                 switch (selected) {
                     case MENU_SINGLE:
                         ctx->netMode = NET_MODE_NONE;
+                        ctx->useServer = false;
                         return SCENE_GAME;
                     case MENU_HOST:
                         ctx->netMode = NET_MODE_HOST;
+                        ctx->useServer = false;
                         return SCENE_MATCHING;
                     case MENU_FIND:
                         ctx->netMode = NET_MODE_CLIENT;
+                        ctx->useServer = false;
                         ctx->hostIp[0] = '\0';
+                        return SCENE_MATCHING;
+                    case MENU_ONLINE:
+                        ctx->netMode = NET_MODE_CLIENT;
+                        ctx->useServer = true;
+                        ctx->serverIp[0] = '\0';   /* 입력 화면이 채움 */
+                        ctx->serverPort = 5555;
+                        ctx->roomName[0] = '\0';
+                        ctx->password[0] = '\0';
                         return SCENE_MATCHING;
                 }
                 break;
@@ -156,13 +170,24 @@ SceneType sceneLobby(SceneContext* ctx)
                 return SCENE_QUIT;
             case '1':
                 ctx->netMode = NET_MODE_NONE;
+                ctx->useServer = false;
                 return SCENE_GAME;
             case '2':
                 ctx->netMode = NET_MODE_HOST;
+                ctx->useServer = false;
                 return SCENE_MATCHING;
             case '3':
                 ctx->netMode = NET_MODE_CLIENT;
+                ctx->useServer = false;
                 ctx->hostIp[0] = '\0';
+                return SCENE_MATCHING;
+            case '4':
+                ctx->netMode = NET_MODE_CLIENT;
+                ctx->useServer = true;
+                ctx->serverIp[0] = '\0';
+                ctx->serverPort = 5555;
+                ctx->roomName[0] = '\0';
+                ctx->password[0] = '\0';
                 return SCENE_MATCHING;
         }
 

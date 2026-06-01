@@ -3,6 +3,7 @@
 #include <string.h>
 #include "scene.h"
 #include "ui.h"
+#include "server.h"
 
 static void printHelp(const char* progName)
 {
@@ -12,9 +13,11 @@ static void printHelp(const char* progName)
     printf("\n");
     printf("Commands:\n");
     printf("  (none)                        Start with main menu\n");
-    printf("  host [port] [name] [pass]     Host a game\n");
-    printf("  join <ip> [port] [pass]       Join a game by IP\n");
+    printf("  host [port] [name] [pass]     Host a game (LAN)\n");
+    printf("  join <ip> [port] [pass]       Join a game by IP (LAN)\n");
     printf("  search                        Search LAN games and join\n");
+    printf("  server [port]                 Run dedicated relay server (headless)\n");
+    printf("  connect <ip> [port] [room]    Connect via relay server (cross-NAT)\n");
     printf("  help                          Show this help message\n");
     printf("\n");
     printf("Examples:\n");
@@ -40,6 +43,16 @@ static void printHelp(const char* progName)
 
 int main(int argc, char* argv[])
 {
+    /* 서버 모드: ncurses 미초기화, 헤드리스로 실행 */
+    if (argc >= 2 && strcmp(argv[1], "server") == 0) {
+        uint16_t srvPort = 5555;
+        if (argc >= 3) {
+            int p = atoi(argv[2]);
+            if (p > 0 && p <= 65535) srvPort = (uint16_t)p;
+        }
+        return runServer(srvPort);
+    }
+
     SceneContext ctx;
     sceneContextInit(&ctx);
 
@@ -108,6 +121,32 @@ int main(int argc, char* argv[])
             ctx.port = 5555;
             ctx.password[0] = '\0';
             ctx.cliMode = true;
+
+            startScene = SCENE_MATCHING;
+        }
+        else if (strcmp(argv[1], "connect") == 0) {
+            if (argc < 3) {
+                fprintf(stderr, "Error: server IP required\n");
+                fprintf(stderr, "Usage: %s connect <ip> [port] [room]\n", argv[0]);
+                return 1;
+            }
+            ctx.netMode = NET_MODE_CLIENT;
+            ctx.useServer = true;
+            strncpy(ctx.serverIp, argv[2], sizeof(ctx.serverIp) - 1);
+            ctx.serverIp[sizeof(ctx.serverIp) - 1] = '\0';
+            ctx.serverPort = 5555;
+            ctx.roomName[0] = '\0';   /* 빈 이름 = quick match */
+            ctx.password[0] = '\0';
+            ctx.cliMode = true;
+
+            if (argc >= 4) {
+                int p = atoi(argv[3]);
+                if (p > 0 && p <= 65535) ctx.serverPort = (uint16_t)p;
+            }
+            if (argc >= 5) {
+                strncpy(ctx.roomName, argv[4], sizeof(ctx.roomName) - 1);
+                ctx.roomName[sizeof(ctx.roomName) - 1] = '\0';
+            }
 
             startScene = SCENE_MATCHING;
         }
