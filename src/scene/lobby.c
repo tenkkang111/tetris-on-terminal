@@ -4,6 +4,10 @@
 #include <string.h>
 #include <unistd.h>
 
+/* 기본 중계 서버 — ONLINE GAME 선택 시 자동 접속 */
+#define DEFAULT_RELAY_IP   "3.26.115.31"
+#define DEFAULT_RELAY_PORT 443
+
 static const char* LOGO[] = {
     " __               __                            ",
     "/\\ \\__           /\\ \\__           __            ",
@@ -158,8 +162,9 @@ SceneType sceneLobby(SceneContext* ctx)
                     case MENU_ONLINE:
                         ctx->netMode = NET_MODE_CLIENT;
                         ctx->useServer = true;
-                        ctx->serverIp[0] = '\0';   /* 입력 화면이 채움 */
-                        ctx->serverPort = 5555;
+                        strncpy(ctx->serverIp, DEFAULT_RELAY_IP, sizeof(ctx->serverIp) - 1);
+                        ctx->serverIp[sizeof(ctx->serverIp) - 1] = '\0';
+                        ctx->serverPort = DEFAULT_RELAY_PORT;
                         ctx->roomName[0] = '\0';
                         ctx->password[0] = '\0';
                         return SCENE_MATCHING;
