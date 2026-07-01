@@ -91,7 +91,7 @@ static inline int typeToIndex(BlockType type)
  * @param rot    회전 상태 (0~3)
  * @param originX 블록 원점의 열(x)
  * @param originY 블록 원점의 행(y)
- * @param out    결과를[4][2] 배열
+ * @param out    결과 셀 좌표 [4][2] 배열 (각 행 = {row, col})
  */
 void getPieceCells(BlockType type, int rot,
                    int originX, int originY,
@@ -108,14 +108,14 @@ void getPieceCells(BlockType type, int rot,
 
 
 /**
- * @brief 목표 좌표/회전 상태에서 충돌 여부를 판
+ * @brief 목표 좌표/회전 상태에서 충돌 여부를 판정.
  *
- *   1. 왼쪽 오른쪽 벽 이탈    (col < 0 || col >= BOARD_COLS)
+ * 다음 중 하나라도 해당하면 충돌로 간주한다:
+ *   1. 좌우 벽 이탈           (col < 0 || col >= BOARD_COLS)
  *   2. 바닥 이탈              (row >= BOARD_ROWS)
  *   3. 이미 채워진 셀과 겹침  (board[row][col] != EMPTY)
- *   시에 충돌로 간주.
  *
- * 천장 위(row < 0)는 스폰 직후 위치이므로 허용
+ * 천장 위(row < 0)는 스폰 직후 위치이므로 허용한다.
  *
  * @return 충돌 시 true, 없으면 false
  */
@@ -330,11 +330,10 @@ void applyPendingGarbage(GameState* state){
         }
     }
 
-    /* 맨 아래 lines 줄에 구멍 1개 뚫린 GARBAGE 줄 삽입
-     *    같은 구멍 위치를 한 묶음에 유지 
-     */
-
-    //TODO: rand 시드 동기화
+    /* 맨 아래 lines 줄에 구멍 1개짜리 GARBAGE 줄을 삽입.
+     * 한 묶음은 같은 열에 구멍을 유지한다.
+     * 구멍 위치는 각자 로컬에서 정하지만, 완성된 보드 전체를 상대에게 전송
+     * (netSendLock/netSendBoardUpdate)하므로 화면 표시는 항상 일치한다. */
     int holeCol = rand() % BOARD_COLS;
  
     for (int i = 0; i < (int)lines; i++) {

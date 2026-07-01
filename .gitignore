@@ -1,1 +1,9 @@
-*.cluade
+# 빌드 산출물
+/build/
+/tetris
+
+# Windows "mark of the web" 메타데이터 (WSL에서 보임)
+*:Zone.Identifier
+
+# 로컬 편집기/툴 설정
+.claude/settings.local.json

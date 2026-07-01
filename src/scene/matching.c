@@ -8,6 +8,7 @@
 #include <sys/socket.h>
 #include <sys/select.h>
 #include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include <errno.h>
@@ -243,6 +244,35 @@ static void searchingScreen(int progress)
     refresh();
 }
 
+/* 약 3초간 LAN을 반복 스캔하며 진행 바를 표시하고, 발견된 호스트를 out에 채운다.
+ * (IP+포트 기준 중복 제거, 최대 NET_MAX_HOSTS개) */
+static void lanSearchWithProgress(HostList* out)
+{
+    memset(out, 0, sizeof(*out));
+
+    const int totalMs = 3000;
+    const int stepMs  = 100;
+
+    for (int elapsed = 0; elapsed < totalMs; elapsed += stepMs) {
+        searchingScreen((elapsed * 100) / totalMs);
+
+        HostList partial;
+        netDiscoverHosts(&partial, stepMs);
+        for (int i = 0; i < partial.count && out->count < NET_MAX_HOSTS; i++) {
+            bool dup = false;
+            for (int j = 0; j < out->count; j++) {
+                if (strcmp(out->hosts[j].ip, partial.hosts[i].ip) == 0 &&
+                    out->hosts[j].port == partial.hosts[i].port) {
+                    dup = true;
+                    break;
+                }
+            }
+            if (!dup) out->hosts[out->count++] = partial.hosts[i];
+        }
+    }
+    searchingScreen(100);
+}
+
 static bool inputScreen(SceneContext* ctx)
 {
     char ipBuf[INPUT_MAX + 1] = "127.0.0.1";
@@ -312,35 +342,9 @@ static bool inputScreen(SceneContext* ctx)
         if (ch == 'f' || ch == 'F') {
             curs_set(0);
 
-lan_search_retry:
-            searchingScreen(0);
-            refresh();
-
             HostList hosts;
-            memset(&hosts, 0, sizeof(hosts));
-
-            /* 3초 동안 검색하면서 프로그레스 표시 */
-            int totalMs = 3000;
-            int stepMs = 100;
-            for (int elapsed = 0; elapsed < totalMs; elapsed += stepMs) {
-                searchingScreen((elapsed * 100) / totalMs);
-
-                /* 짧은 검색 수행 */
-                HostList partial;
-                netDiscoverHosts(&partial, stepMs);
-                for (int i = 0; i < partial.count && hosts.count < NET_MAX_HOSTS; i++) {
-                    bool dup = false;
-                    for (int j = 0; j < hosts.count; j++) {
-                        if (strcmp(hosts.hosts[j].ip, partial.hosts[i].ip) == 0 &&
-                            hosts.hosts[j].port == partial.hosts[i].port) {
-                            dup = true;
-                            break;
-                        }
-                    }
-                    if (!dup) hosts.hosts[hosts.count++] = partial.hosts[i];
-                }
-            }
-            searchingScreen(100);
+lan_search_retry:
+            lanSearchWithProgress(&hosts);
 
             int result = lanSearchScreen(ctx, &hosts);
             if (result == -1) {
@@ -812,33 +816,9 @@ SceneType sceneMatching(SceneContext* ctx)
             curs_set(0);
             nodelay(stdscr, TRUE);
 
-lan_find_retry:
-            searchingScreen(0);
-            refresh();
-
             HostList hosts;
-            memset(&hosts, 0, sizeof(hosts));
-
-            int totalMs = 3000;
-            int stepMs = 100;
-            for (int elapsed = 0; elapsed < totalMs; elapsed += stepMs) {
-                searchingScreen((elapsed * 100) / totalMs);
-
-                HostList partial;
-                netDiscoverHosts(&partial, stepMs);
-                for (int i = 0; i < partial.count && hosts.count < NET_MAX_HOSTS; i++) {
-                    bool dup = false;
-                    for (int j = 0; j < hosts.count; j++) {
-                        if (strcmp(hosts.hosts[j].ip, partial.hosts[i].ip) == 0 &&
-                            hosts.hosts[j].port == partial.hosts[i].port) {
-                            dup = true;
-                            break;
-                        }
-                    }
-                    if (!dup) hosts.hosts[hosts.count++] = partial.hosts[i];
-                }
-            }
-            searchingScreen(100);
+lan_find_retry:
+            lanSearchWithProgress(&hosts);
 
             int result = lanSearchScreen(ctx, &hosts);
             if (result == -1) {
@@ -938,7 +918,7 @@ lan_find_retry:
                 int sock = accept(listenFd, NULL, NULL);
                 if (sock >= 0) {
                     int one = 1;
-                    setsockopt(sock, IPPROTO_TCP, 0x01, &one, sizeof(one));
+                    setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
 
                     ctx->net.mode = NET_MODE_HOST;
                     ctx->net.sock = sock;
@@ -1010,7 +990,7 @@ client_connect_retry:
 
             if (connect(sock, (struct sockaddr*)&addr, sizeof(addr)) == 0) {
                 int one = 1;
-                setsockopt(sock, IPPROTO_TCP, 0x01, &one, sizeof(one));
+                setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
 
                 ctx->net.mode = NET_MODE_CLIENT;
                 ctx->net.sock = sock;

@@ -69,7 +69,4 @@ int  uiCardSelectModal(const GameState* me, NetContext* netCtx,
                        const AugInventory* augInv, const LevelState* lvl,
                        const CardOffer* offer);
 
-void uiShowMessage(const char* msg);
-void uiWaitKey(void);
-
 #endif

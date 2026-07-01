@@ -42,32 +42,58 @@ static const char* MENU_DESC[] = {
     "Connect via relay server (cross-NAT)"
 };
 
+/* 선택된 항목은 굵게(A_BOLD) 그린다. 그 외에는 테두리 모양이 동일하다. */
 static void drawMenuBox(int y, int x, int w, int h, bool selected)
 {
-    chtype ul = selected ? ACS_ULCORNER : ACS_ULCORNER;
-    chtype ur = selected ? ACS_URCORNER : ACS_URCORNER;
-    chtype ll = selected ? ACS_LLCORNER : ACS_LLCORNER;
-    chtype lr = selected ? ACS_LRCORNER : ACS_LRCORNER;
-    chtype hl = selected ? ACS_HLINE : ACS_HLINE;
-    chtype vl = selected ? ACS_VLINE : ACS_VLINE;
-
     if (selected) attron(A_BOLD);
 
-    mvaddch(y, x, ul);
-    for (int i = 1; i < w - 1; i++) mvaddch(y, x + i, hl);
-    mvaddch(y, x + w - 1, ur);
+    mvaddch(y, x, ACS_ULCORNER);
+    for (int i = 1; i < w - 1; i++) mvaddch(y, x + i, ACS_HLINE);
+    mvaddch(y, x + w - 1, ACS_URCORNER);
 
     for (int j = 1; j < h - 1; j++) {
-        mvaddch(y + j, x, vl);
+        mvaddch(y + j, x, ACS_VLINE);
         for (int i = 1; i < w - 1; i++) mvaddch(y + j, x + i, ' ');
-        mvaddch(y + j, x + w - 1, vl);
+        mvaddch(y + j, x + w - 1, ACS_VLINE);
     }
 
-    mvaddch(y + h - 1, x, ll);
-    for (int i = 1; i < w - 1; i++) mvaddch(y + h - 1, x + i, hl);
-    mvaddch(y + h - 1, x + w - 1, lr);
+    mvaddch(y + h - 1, x, ACS_LLCORNER);
+    for (int i = 1; i < w - 1; i++) mvaddch(y + h - 1, x + i, ACS_HLINE);
+    mvaddch(y + h - 1, x + w - 1, ACS_LRCORNER);
 
     if (selected) attroff(A_BOLD);
+}
+
+/* 선택한 메뉴 항목에 맞춰 컨텍스트를 설정하고 다음 씬을 반환한다.
+ * ENTER와 숫자 단축키(1~4)가 동일한 경로를 타도록 공용화. */
+static SceneType lobbySelect(SceneContext* ctx, int item)
+{
+    switch (item) {
+        case MENU_SINGLE:
+            ctx->netMode = NET_MODE_NONE;
+            ctx->useServer = false;
+            return SCENE_GAME;
+        case MENU_HOST:
+            ctx->netMode = NET_MODE_HOST;
+            ctx->useServer = false;
+            return SCENE_MATCHING;
+        case MENU_FIND:
+            ctx->netMode = NET_MODE_CLIENT;
+            ctx->useServer = false;
+            ctx->hostIp[0] = '\0';
+            return SCENE_MATCHING;
+        case MENU_ONLINE:
+            ctx->netMode = NET_MODE_CLIENT;
+            ctx->useServer = true;
+            strncpy(ctx->serverIp, DEFAULT_RELAY_IP, sizeof(ctx->serverIp) - 1);
+            ctx->serverIp[sizeof(ctx->serverIp) - 1] = '\0';
+            ctx->serverPort = DEFAULT_RELAY_PORT;
+            ctx->roomName[0] = '\0';
+            ctx->password[0] = '\0';
+            return SCENE_MATCHING;
+        default:
+            return SCENE_LOBBY;
+    }
 }
 
 SceneType sceneLobby(SceneContext* ctx)
@@ -145,55 +171,14 @@ SceneType sceneLobby(SceneContext* ctx)
             case '\n':
             case '\r':
             case KEY_ENTER:
-                switch (selected) {
-                    case MENU_SINGLE:
-                        ctx->netMode = NET_MODE_NONE;
-                        ctx->useServer = false;
-                        return SCENE_GAME;
-                    case MENU_HOST:
-                        ctx->netMode = NET_MODE_HOST;
-                        ctx->useServer = false;
-                        return SCENE_MATCHING;
-                    case MENU_FIND:
-                        ctx->netMode = NET_MODE_CLIENT;
-                        ctx->useServer = false;
-                        ctx->hostIp[0] = '\0';
-                        return SCENE_MATCHING;
-                    case MENU_ONLINE:
-                        ctx->netMode = NET_MODE_CLIENT;
-                        ctx->useServer = true;
-                        strncpy(ctx->serverIp, DEFAULT_RELAY_IP, sizeof(ctx->serverIp) - 1);
-                        ctx->serverIp[sizeof(ctx->serverIp) - 1] = '\0';
-                        ctx->serverPort = DEFAULT_RELAY_PORT;
-                        ctx->roomName[0] = '\0';
-                        ctx->password[0] = '\0';
-                        return SCENE_MATCHING;
-                }
-                break;
+                return lobbySelect(ctx, selected);
             case 'q':
             case 'Q':
                 return SCENE_QUIT;
-            case '1':
-                ctx->netMode = NET_MODE_NONE;
-                ctx->useServer = false;
-                return SCENE_GAME;
-            case '2':
-                ctx->netMode = NET_MODE_HOST;
-                ctx->useServer = false;
-                return SCENE_MATCHING;
-            case '3':
-                ctx->netMode = NET_MODE_CLIENT;
-                ctx->useServer = false;
-                ctx->hostIp[0] = '\0';
-                return SCENE_MATCHING;
-            case '4':
-                ctx->netMode = NET_MODE_CLIENT;
-                ctx->useServer = true;
-                ctx->serverIp[0] = '\0';
-                ctx->serverPort = 5555;
-                ctx->roomName[0] = '\0';
-                ctx->password[0] = '\0';
-                return SCENE_MATCHING;
+            case '1': return lobbySelect(ctx, MENU_SINGLE);
+            case '2': return lobbySelect(ctx, MENU_HOST);
+            case '3': return lobbySelect(ctx, MENU_FIND);
+            case '4': return lobbySelect(ctx, MENU_ONLINE);
         }
 
         usleep(16000);

@@ -517,26 +517,20 @@ static void drawPlayerPanel(int topRow, int leftCol, const char* title,
         }
     }
 
-    /* Lock Delay Bar */
+    /* Lock Delay Bar (진행도에 따라 초록→노랑→빨강) */
     int lockRow = boardTop + BOARD_H + 2;
     if (lockProgress >= 0.0f) {
         int barW = 10;
         int filled = (int)(lockProgress * barW);
         if (filled > barW) filled = barW;
+
+        int barColor = (lockProgress < 0.5f) ? S : (lockProgress < 0.8f) ? L : Z;
+
         mvprintw(lockRow, boardLeft + 1, "LOCK [");
-        for (int i = 0; i < barW; i++) {
-            if (i < filled) {
-                if (gColors) {
-                    if (lockProgress < 0.5f) attron(COLOR_PAIR(S) | A_BOLD);
-                    else if (lockProgress < 0.8f) attron(COLOR_PAIR(L) | A_BOLD);
-                    else attron(COLOR_PAIR(Z) | A_BOLD);
-                }
-                addch('#');
-                if (gColors) attroff(COLOR_PAIR(S) | COLOR_PAIR(L) | COLOR_PAIR(Z) | A_BOLD);
-            } else {
-                addch('.');
-            }
-        }
+        if (gColors) attron(COLOR_PAIR(barColor) | A_BOLD);
+        for (int i = 0; i < filled; i++) addch('#');
+        if (gColors) attroff(COLOR_PAIR(barColor) | A_BOLD);
+        for (int i = filled; i < barW; i++) addch('.');
         addch(']');
     } else {
         mvprintw(lockRow, boardLeft + 1, "                  ");
@@ -801,20 +795,4 @@ int uiCardSelectModal(const GameState* me, NetContext* netCtx,
 
 done:
     return selected;
-}
-
-void uiShowMessage(const char* msg)
-{
-    int controlsRow = 2 + 2 + BOARD_H + 5;
-    move(controlsRow, 2);
-    clrtoeol();
-    mvprintw(controlsRow, 2, "%s", msg);
-    refresh();
-}
-
-void uiWaitKey(void)
-{
-    nodelay(stdscr, FALSE);
-    (void)getch();
-    nodelay(stdscr, TRUE);
 }
